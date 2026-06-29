@@ -3,7 +3,6 @@
 """
 AIALL vLLM Gateway – Cluster Deployer (Python V3-SYNC)
 ------------------------------------------------------
-Thay thế hoàn toàn Ollama bằng vLLM:
 - BASE_URL = https://api.aiallplatform.com
 - API chuẩn OpenAI (vLLM):
     /v1/chat/completions
@@ -15,6 +14,7 @@ Thay thế hoàn toàn Ollama bằng vLLM:
 
 import argparse
 import os
+import shutil
 import subprocess
 from secrets import token_hex
 from typing import List
@@ -37,11 +37,10 @@ from core.firewall import setup_firewall
 from core.backup import setup_backup
 
 from core.system_services import (
-    install_vllm,              # thay thế install_ollama
-    configure_vllm_service,    # thay thế configure_ollama_service
+    install_vllm,
+    configure_vllm_service,
     install_nginx,
     install_certbot,
-    issue_ssl_for_domain,
 )
 
 from core.health_cluster import health_check
@@ -54,6 +53,10 @@ from core.auto_drain import auto_drain
 
 def is_linux() -> bool:
     return os.name == "posix"
+
+
+def apt_exists() -> bool:
+    return shutil.which("apt") is not None
 
 
 def require_root() -> None:
@@ -92,9 +95,6 @@ def init_project_config() -> ProjectConfig:
 
     base_url = f"https://{DOMAINS[0]}"
 
-    # ================================
-    #  API CHUẨN vLLM / OpenAI
-    # ================================
     api_chat = "/v1/chat/completions"
     api_completion = "/v1/completions"
     api_models = "/v1/models"
@@ -163,6 +163,10 @@ def update_system() -> None:
         log("[WARN] Non-Linux system — skipping system update.")
         return
 
+    if not apt_exists():
+        log("[WARN] apt not found — skipping system update.")
+        return
+
     log("[INFO] Updating system...")
     run(["apt", "update"])
     run(["apt", "upgrade", "-y"])
@@ -180,10 +184,10 @@ def deploy_services() -> None:
 
 
 def configure_nginx_and_ssl() -> None:
-    ngx.generate_upstream_block()  # upstream cho vLLM (port 8000)
+    ngx.generate_upstream_block()
 
     for domain in DOMAINS:
-        issue_ssl_for_domain(domain)
+        ngx.issue_ssl_for_domain(domain)
         ngx.configure_nginx_site_for_domain(domain)
 
     ngx.reload_nginx()
@@ -203,17 +207,13 @@ def print_api_info(cfg: ProjectConfig) -> None:
     log(f"  MODELS_URL     : {cfg.url_models}")
     log(f"  API_KEY        : {cfg.api_key}")
     log(f"  TOKEN_SECRET   : {cfg.token_secret}")
-    log(f"  DEFAULT_MAX_TOKENS : {cfg.default_max_tokens}")
-    log(f"  DEFAULT_MIN_TOKENS : {cfg.default_min_tokens}")
-    log(f"  DEFAULT_TEMPERATURE: {cfg.default_temperature}")
-    log(f"  DEFAULT_TOP_P      : {cfg.default_top_p}")
 
     log("[INFO] Test your API (chat/completions):")
     log(
         f"curl -X POST {cfg.url_chat} "
         f"-H \"x-api-key: {cfg.api_key}\" "
         f"-H \"Content-Type: application/json\" "
-        f"-d '{{\"model\":\"Qwen/Qwen2.5-3B-Instruct\",\"messages\":[{{\"role\":\"user\",\"content\":\"hello\"}}]}}'"
+        f"-d '{{\"model\":\"meta-llama/Llama-3.1-8B-Instruct\",\"messages\":[{{\"role\":\"user\",\"content\":\"hello\"}}]}}'"
     )
 
     log("[INFO] Test your API (models list / health):")
@@ -228,6 +228,9 @@ def print_api_info(cfg: ProjectConfig) -> None:
 # ============================================================
 
 def full_deploy() -> None:
+    if not is_linux():
+        raise SystemExit("[ERROR] Full deploy is only supported on Linux servers.")
+
     require_root()
     log(f"[INFO] Starting AIALL vLLM Gateway deployment for: {', '.join(DOMAINS)}")
 
@@ -337,3 +340,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
