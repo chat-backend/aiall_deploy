@@ -1,19 +1,27 @@
 # train/train_pipeline.py
 #!/usr/bin/env python3
 """
-AIALL – FULL TRAIN PIPELINE (Linux Production)
----------------------------------------------
-- Train LoRA trên base model Qwen2.5-1.5B
-- Lưu adapter vào aiall-lora/
-- Merge LoRA vào full model aiall-merged/
-- Cập nhật MODEL_TOKEN
-- Đăng ký backend vào gateway (Nginx)
-- Smoke test inference với lớp Real-Time Context
+AIALL – FULL TRAIN PIPELINE (Linux Production, GPU/CPU-aware)
+-------------------------------------------------------------
+- Nếu có GPU:
+    - Train LoRA trên base model Qwen2.5-1.5B
+    - Lưu adapter vào aiall-lora/
+    - Merge LoRA vào full model aiall-merged/
+    - Cập nhật MODEL_TOKEN
+    - Đăng ký backend vào gateway (Nginx)
+    - Smoke test inference với lớp Real-Time Context
+
+- Nếu KHÔNG có GPU:
+    - Chỉ preview dataset (nhẹ, chạy được trên CPU)
+    - Đăng ký backend vào gateway (Nginx)
+    - Bỏ qua train, merge, smoke test để tránh treo trên CPU
 """
 
 import platform
 import sys
 import os
+
+import torch  # thêm để kiểm tra GPU
 
 from train.aiall_train import (
     load_base_model,
@@ -36,9 +44,12 @@ def ensure_linux():
         sys.exit(1)
 
 
+def has_gpu():
+    return torch.cuda.is_available() and torch.cuda.device_count() > 0
+
+
 def step_1_preview():
     print("\n=== STEP 1: PREVIEW DATASET ===")
-    # Chỉ cần tokenizer để kiểm tra dataset
     _, tokenizer = load_base_model()
     tokenized = load_dataset_tokenized(tokenizer)
     print("Dataset size:", len(tokenized))
@@ -95,15 +106,22 @@ def step_5_register_backend():
 def main():
     ensure_linux()
 
-    print("=== AIALL FULL TRAIN PIPELINE START ===")
-
-    step_1_preview()
-    step_2_train()
-    step_3_merge()
-    step_4_inference_smoke_test()
-    step_5_register_backend()
-
-    print("\n=== AIALL FULL TRAIN PIPELINE COMPLETE ===")
+    if has_gpu():
+        # FULL PIPELINE – GPU MODE
+        print("=== AIALL FULL TRAIN PIPELINE START (GPU MODE) ===")
+        step_1_preview()
+        step_2_train()
+        step_3_merge()
+        step_4_inference_smoke_test()
+        step_5_register_backend()
+        print("\n=== AIALL FULL TRAIN PIPELINE COMPLETE (GPU MODE) ===")
+    else:
+        # CPU MODE – NO TRAIN
+        print("=== AIALL TRAIN PIPELINE START (CPU MODE, NO GPU) ===")
+        print("⚠ WARNING: Không có GPU → bỏ qua train LoRA, merge, smoke test.")
+        step_1_preview()
+        step_5_register_backend()
+        print("\n=== AIALL TRAIN PIPELINE COMPLETE (CPU MODE) ===")
 
 
 if __name__ == "__main__":
