@@ -1,12 +1,4 @@
 # core/nginx.py
-"""
-Nginx Manager for AIALL vLLM Gateway
-------------------------------------
-- Tạo upstream vLLM backend
-- Tạo site config chuẩn OpenAI API
-- Cấp SSL
-- Reload Nginx
-"""
 
 import subprocess
 from pathlib import Path
@@ -19,12 +11,7 @@ from config import (
 )
 
 from core.backends import get_active_backends
-from core.health_cluster import health_check
 
-
-# ============================================================
-#  UTILS
-# ============================================================
 
 def log(msg: str) -> None:
     print(f"[NGINX] {msg}")
@@ -41,10 +28,6 @@ def atomic_write(path: Path, content: str) -> None:
     tmp.replace(path)
 
 
-# ============================================================
-#  LOAD PROJECT CONFIG
-# ============================================================
-
 def load_project_config() -> dict:
     if not PROJECT_CONFIG_FILE.exists():
         raise RuntimeError(f"Project config not found: {PROJECT_CONFIG_FILE}")
@@ -58,7 +41,7 @@ def load_project_config() -> dict:
 
 
 # ============================================================
-#  GENERATE UPSTREAM BLOCK (vLLM)
+#  UPSTREAM (vLLM cluster)
 # ============================================================
 
 def generate_upstream_block() -> None:
@@ -90,10 +73,10 @@ def generate_upstream_block() -> None:
 
 
 # ============================================================
-#  BUILD NGINX SITE CONFIG (vLLM)
+#  NGINX SITE FOR DOMAIN
 # ============================================================
 
-def build_nginx_site_content(domain: str, api_key: str) -> str:
+def build_nginx_site_content(domain: str) -> str:
     return f"""
 server {{
     listen 80;
@@ -112,15 +95,12 @@ server {{
 
     client_max_body_size 100M;
 
-    # Security headers
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-XSS-Protection "1; mode=block" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
-    # ============================
-    #  vLLM OpenAI-compatible API
-    # ============================
+    # OpenAI-compatible API (vLLM backend)
     location /v1/ {{
         proxy_pass http://vllm_cluster;
 
@@ -129,7 +109,6 @@ server {{
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # Forward Authorization header
         proxy_set_header Authorization $http_authorization;
 
         proxy_read_timeout 3600;
@@ -142,13 +121,10 @@ server {{
 
 
 def configure_nginx_site_for_domain(domain: str) -> None:
-    cfg = load_project_config()
-    api_key = cfg.get("API_KEY", "")
+    site_file = Path(f"/etc/nginx/sites-available/{domain}.conf")
+    atomic_write(site_file, build_nginx_site_content(domain))
 
-    site_file = Path(f"/etc/nginx/sites-available/vllm-{domain}")
-    atomic_write(site_file, build_nginx_site_content(domain, api_key))
-
-    enabled = Path(f"/etc/nginx/sites-enabled/vllm-{domain}")
+    enabled = Path(f"/etc/nginx/sites-enabled/{domain}.conf")
     if enabled.exists() or enabled.is_symlink():
         enabled.unlink()
 
@@ -158,19 +134,37 @@ def configure_nginx_site_for_domain(domain: str) -> None:
 
 
 # ============================================================
-#  RELOAD NGINX
+#  AIALL ROUTE (FASTAPI)
 # ============================================================
 
-def reload_nginx() -> None:
-    log("Testing nginx config...")
-    run(["nginx", "-t"])
+def configure_aiall_route():
+    """
+    Route nội bộ cho FastAPI /aiall/
+    Đồng bộ với upstream vllm_cluster
+    """
 
-    log("Reloading nginx...")
-    run(["nginx", "-s", "reload"])
+    conf = f"""
+server {{
+    listen 443 ssl;
+    server_name api.aiallplatform.com;
+
+    ssl_certificate /etc/letsencrypt/live/api.aiallplatform.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.aiallplatform.com/privkey.pem;
+
+    location /aiall/ {{
+        proxy_pass http://vllm_cluster;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }}
+}}
+"""
+    Path("/etc/nginx/conf.d/aiall-route.conf").write_text(conf)
+    log("AIALL route configured")
 
 
 # ============================================================
-#  ISSUE SSL
+#  SSL + RELOAD
 # ============================================================
 
 def issue_ssl_for_domain(domain: str) -> None:
@@ -194,20 +188,9 @@ def issue_ssl_for_domain(domain: str) -> None:
     log(f"SSL obtained for {domain}")
 
 
-# ============================================================
-#  FULL DEPLOY PIPELINE
-# ============================================================
+def reload_nginx() -> None:
+    log("Testing nginx config...")
+    run(["nginx", "-t"])
 
-def configure_all_domains() -> None:
-    log("=== Starting full Nginx/vLLM gateway deployment ===")
-
-    health_check()
-    generate_upstream_block()
-
-    for domain in DOMAINS:
-        issue_ssl_for_domain(domain)
-        configure_nginx_site_for_domain(domain)
-
-    reload_nginx()
-    log("=== Deployment completed successfully ===")
-
+    log("Reloading nginx...")
+    run(["nginx", "-s", "reload"])

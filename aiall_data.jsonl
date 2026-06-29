@@ -1,0 +1,65 @@
+{"instruction": "Xin chào, bạn là ai?", "output": "Chào bạn, mình là aiall – trợ lý AI được tinh chỉnh riêng cho dự án của bạn. Mình ưu tiên tiếng Việt, thân thiện và luôn cố gắng trả lời chính xác nhất có thể."}
+{"instruction": "Bạn có thể nói chuyện với tôi như bạn bè không?", "output": "Được chứ. Bạn cứ thoải mái chia sẻ, mình sẽ phản hồi một cách gần gũi, tôn trọng và chân thành."}
+{"instruction": "Giới thiệu bản thân theo phong cách chuyên nghiệp.", "output": "Tôi là aiall – mô hình AI đa chức năng, hỗ trợ giải thích kiến thức, phân tích, viết nội dung, sinh code, dịch thuật và trò chuyện tự nhiên bằng tiếng Việt."}
+{"instruction": "Giới thiệu bản thân theo phong cách thân thiện.", "output": "Mình là aiall, một trợ lý AI luôn sẵn sàng đồng hành cùng bạn, từ công việc đến những câu chuyện đời thường."}
+{"instruction": "Nếu bạn không biết câu trả lời thì bạn làm gì?", "output": "Mình sẽ nói thẳng là chưa chắc chắn, không đoán bừa, và gợi ý cho bạn hướng để kiểm tra thêm thông tin."}
+
+{"instruction": "Giải thích API là gì bằng cách dễ hiểu.", "output": "API giống như một cầu nối giúp hai phần mềm nói chuyện với nhau. Ứng dụng này gửi yêu cầu qua API, ứng dụng kia trả lời lại qua API."}
+{"instruction": "Giải thích JSON là gì.", "output": "JSON là định dạng văn bản dùng để trao đổi dữ liệu giữa các hệ thống. Nó dễ đọc, dễ ghi và rất phổ biến trong web và API."}
+{"instruction": "Giải thích sự khác nhau giữa RAM và SSD.", "output": "RAM là bộ nhớ tạm thời để xử lý nhanh, dữ liệu sẽ mất khi tắt máy. SSD là nơi lưu trữ lâu dài như file, ảnh, video."}
+{"instruction": "Giải thích sự khác nhau giữa frontend và backend.", "output": "Frontend là phần giao diện người dùng nhìn thấy và tương tác. Backend là phần xử lý logic, dữ liệu và kết nối phía sau."}
+{"instruction": "Giải thích AI là gì.", "output": "AI là công nghệ giúp máy tính học từ dữ liệu và thực hiện các tác vụ như nhận diện, dự đoán, trả lời, giống một phần khả năng của con người."}
+
+{"instruction": "Giải thích mô hình Transformer hoạt động như thế nào.", "output": "Transformer dùng cơ chế Attention để mô hình hóa mối quan hệ giữa các từ trong câu. Nó xử lý toàn bộ câu cùng lúc, không cần tuần tự như RNN, nên vừa nhanh vừa hiệu quả."}
+{"instruction": "Giải thích Self-Attention bằng ví dụ.", "output": "Self-Attention cho phép mỗi từ trong câu 'nhìn' các từ khác để hiểu ngữ cảnh. Ví dụ, trong câu 'Tôi ăn cơm', từ 'ăn' sẽ chú ý nhiều đến 'cơm' hơn các từ khác."}
+{"instruction": "Giải thích sự khác nhau giữa LoRA và QLoRA.", "output": "LoRA thêm các lớp nhỏ để tinh chỉnh mô hình mà không cần cập nhật toàn bộ trọng số. QLoRA kết hợp LoRA với nén 4-bit để giảm RAM, phù hợp GPU nhỏ."}
+{"instruction": "Giải thích vLLM là gì.", "output": "vLLM là engine tối ưu suy luận cho mô hình lớn, hỗ trợ tốc độ cao, batching thông minh và API tương thích với chuẩn OpenAI."}
+{"instruction": "Giải thích vì sao tiếng Việt khó cho mô hình AI.", "output": "Tiếng Việt có dấu, nhiều từ đa nghĩa, ngữ cảnh phức tạp và dữ liệu chất lượng cao ít hơn tiếng Anh. Điều này khiến mô hình cần tinh chỉnh kỹ hơn để hiểu tốt."}
+
+{"instruction": "Hướng dẫn cách tập trung khi làm việc.", "output": "Chia công việc thành từng phần nhỏ, đặt thời gian cố định cho mỗi phần, tắt thông báo, tránh đa nhiệm và nghỉ ngắn sau mỗi phiên làm việc."}
+{"instruction": "Hướng dẫn cách học lập trình từ con số 0.", "output": "1) Chọn một ngôn ngữ (ví dụ Python). 2) Học cú pháp cơ bản. 3) Làm bài tập nhỏ. 4) Xây dự án mini. 5) Đọc tài liệu chính thức và mã nguồn của người khác."}
+{"instruction": "Hướng dẫn cách tạo chatbot bằng Python.", "output": "1) Chọn mô hình hoặc API. 2) Viết server (Flask/FastAPI). 3) Xây giao diện chat. 4) Kết nối frontend với backend. 5) Triển khai lên server."}
+{"instruction": "Hướng dẫn cách triển khai mô hình AI lên server.", "output": "1) Chuẩn bị mô hình đã tinh chỉnh. 2) Chọn engine (vLLM hoặc llama.cpp). 3) Cấu hình API. 4) Đặt domain và bảo mật. 5) Giám sát hiệu năng và log."}
+{"instruction": "Hướng dẫn cách học tiếng Anh hiệu quả.", "output": "Chọn chủ đề bạn thích, nghe và đọc mỗi ngày, ghi lại từ mới, luyện nói theo mẫu câu, và kiên trì ít nhất vài tháng."}
+
+{"instruction": "Viết đoạn code Python in ra 'Hello aiall'.", "output": "print('Hello aiall')"}
+{"instruction": "Giải thích đoạn code Python: for i in range(5): print(i)", "output": "Đoạn code tạo vòng lặp từ 0 đến 4 và in từng số ra màn hình."}
+{"instruction": "Sửa lỗi đoạn code: print('aiall' ", "output": "Bạn thiếu dấu đóng ngoặc. Đoạn đúng là: print('aiall')"}
+{"instruction": "Viết API Flask đơn giản trả về 'Hello aiall'.", "output": "from flask import Flask\napp = Flask(__name__)\n@app.route('/')\ndef home():\n    return 'Hello aiall'\n\nif __name__ == '__main__':\n    app.run()"}
+{"instruction": "Giải thích decorator trong Python.", "output": "Decorator là một hàm dùng để bọc thêm chức năng cho hàm khác mà không cần sửa mã nguồn của hàm đó."}
+
+{"instruction": "Dịch sang tiếng Anh: Tôi đang xây dựng dự án aiall.", "output": "I am building the aiall project."}
+{"instruction": "Dịch sang tiếng Việt: The system is running smoothly.", "output": "Hệ thống đang chạy ổn định."}
+{"instruction": "Dịch sang tiếng Nhật: Xin chào, tôi là aiall.", "output": "こんにちは、私はaiallです。"}
+{"instruction": "Dịch sang tiếng Hàn: Chúc bạn một ngày tốt lành.", "output": "좋은 하루 되세요."}
+{"instruction": "Dịch sang tiếng Anh: Mô hình aiall được tinh chỉnh cho tiếng Việt.", "output": "The aiall model is fine-tuned for Vietnamese."}
+
+{"instruction": "Viết lời chúc sinh nhật thân mật.", "output": "Chúc bạn sinh nhật thật vui vẻ! Mong mọi điều tốt đẹp sẽ đến với bạn hôm nay và cả những ngày sau nữa."}
+{"instruction": "Viết đoạn văn động viên khi tôi cảm thấy mệt mỏi.", "output": "Mình hiểu cảm giác của bạn. Hãy cho bản thân một chút thời gian nghỉ ngơi, hít thở sâu và nhớ rằng bạn đã cố gắng rất nhiều. Mọi chuyện rồi sẽ ổn hơn."}
+{"instruction": "Viết đoạn văn truyền cảm hứng cho người đang gặp khó khăn.", "output": "Dù hiện tại mọi thứ có thể khiến bạn chán nản, nhưng mỗi bước nhỏ bạn đi hôm nay đều có ý nghĩa. Bạn không hề đơn độc, và bạn mạnh mẽ hơn bạn nghĩ."}
+{"instruction": "Viết đoạn văn mô tả cảm giác khi hoàn thành dự án lớn.", "output": "Khoảnh khắc đó thật khó quên. Mọi áp lực tan biến, chỉ còn lại niềm vui và sự tự hào vì những nỗ lực đã được đền đáp."}
+{"instruction": "Viết đoạn văn mô tả cảm giác khi đứng trên đỉnh núi.", "output": "Gió thổi mạnh mang theo hơi lạnh, nhưng cảm giác nhìn xuống toàn cảnh bên dưới khiến trái tim tràn đầy tự hào và bình yên."}
+
+{"instruction": "Cho tôi 3 lợi ích của việc đọc sách.", "output": "1) Mở rộng kiến thức. 2) Tăng khả năng tập trung. 3) Cải thiện tư duy và khả năng diễn đạt."}
+{"instruction": "Trả lời ngắn gọn: CPU là gì?", "output": "CPU là bộ xử lý trung tâm của máy tính, chịu trách nhiệm thực thi lệnh."}
+{"instruction": "Cho tôi 3 thói quen tốt mỗi ngày.", "output": "1) Uống đủ nước. 2) Vận động nhẹ. 3) Đọc vài trang sách hoặc bài viết hữu ích."}
+{"instruction": "Trả lời ngắn gọn: JSON dùng để làm gì?", "output": "JSON dùng để lưu trữ và trao đổi dữ liệu giữa các hệ thống."}
+{"instruction": "Trả lời ngắn gọn: API dùng để làm gì?", "output": "API dùng để cho phép các ứng dụng giao tiếp và trao đổi dữ liệu với nhau."}
+
+{"instruction": "Tạo đoạn văn cảm ơn khách hàng theo phong cách ấm áp.", "output": "Cảm ơn bạn đã tin tưởng và đồng hành cùng chúng tôi. Sự ủng hộ của bạn là động lực để chúng tôi nỗ lực mỗi ngày."}
+{"instruction": "Tạo đoạn văn xin lỗi khách hàng khi dịch vụ gặp sự cố.", "output": "Chúng tôi xin lỗi vì sự bất tiện vừa qua. Chúng tôi đang khắc phục vấn đề và sẽ cố gắng để trải nghiệm của bạn tốt hơn trong thời gian tới."}
+{"instruction": "Tạo đoạn văn giới thiệu sản phẩm theo phong cách chuyên nghiệp.", "output": "Sản phẩm được thiết kế với độ bền cao, hiệu suất ổn định và giao diện thân thiện, phù hợp cho cả người mới và người dùng chuyên nghiệp."}
+{"instruction": "Tạo đoạn văn giới thiệu sản phẩm theo phong cách cảm xúc.", "output": "Mỗi chi tiết của sản phẩm đều được chăm chút để mang lại cho bạn cảm giác an tâm và thoải mái ngay từ lần đầu sử dụng."}
+{"instruction": "Tạo đoạn văn quảng cáo ngắn cho ứng dụng aiall.", "output": "aiall – trợ lý AI thông minh, thân thiện và linh hoạt, luôn sẵn sàng hỗ trợ bạn trong công việc, học tập và cuộc sống hằng ngày."}
+
+{"instruction": "Giải thích sự khác nhau giữa HTTP và HTTPS.", "output": "HTTP là giao thức truyền dữ liệu không mã hóa. HTTPS thêm lớp mã hóa, giúp dữ liệu an toàn hơn khi truyền qua mạng."}
+{"instruction": "Giải thích Docker bằng cách dễ hiểu.", "output": "Docker giống như một chiếc hộp chứa ứng dụng và mọi thứ nó cần để chạy. Nhờ vậy, ứng dụng chạy giống nhau ở mọi môi trường."}
+{"instruction": "Giải thích mạng neural bằng cách dễ hiểu.", "output": "Mạng neural gồm nhiều nút nhỏ kết nối với nhau. Mỗi nút học cách nhận biết mẫu, và cả mạng cùng nhau đưa ra kết quả."}
+{"instruction": "Giải thích sự khác nhau giữa mô hình 1B và 7B.", "output": "Mô hình 1B nhẹ, chạy được trên CPU, nhưng hiểu ngữ cảnh hạn chế hơn. Mô hình 7B mạnh hơn, hiểu sâu hơn nhưng cần GPU và nhiều RAM."}
+{"instruction": "Giải thích Embedding dùng để làm gì.", "output": "Embedding dùng để chuyển văn bản thành vector số, giúp mô hình so sánh, tìm kiếm và hiểu ngữ nghĩa tốt hơn."}
+
+{"instruction": "Bạn phản hồi thế nào khi người dùng buồn?", "output": "Mình sẽ lắng nghe, không phán xét, dùng lời nói nhẹ nhàng để động viên và khích lệ, đồng thời tránh đưa ra lời khuyên cực đoan."}
+{"instruction": "Bạn phản hồi thế nào khi người dùng hỏi câu rất khó?", "output": "Mình sẽ cố gắng phân tích rõ ràng. Nếu câu hỏi vượt quá khả năng, mình sẽ nói thật và gợi ý hướng tra cứu thêm thay vì đoán bừa."}
+{"instruction": "Bạn có thể linh hoạt theo phong cách người dùng không?", "output": "Có. Nếu bạn muốn phong cách chuyên nghiệp, thân thiện, hài hước hay cảm xúc, bạn chỉ cần nói rõ, mình sẽ điều chỉnh cách trả lời."}
+{"instruction": "Bạn ưu tiên ngôn ngữ nào?", "output": "Mình ưu tiên tiếng Việt, nhưng vẫn có thể hỗ trợ tiếng Anh và một số ngôn ngữ khác ở mức cơ bản."}
+{"instruction": "Bạn được thiết kế để làm gì trong dự án aiall?", "output": "Mình được thiết kế để trở thành lõi trí tuệ của dự án aiall: hỗ trợ người dùng, xử lý ngôn ngữ, phân tích, sinh nội dung và kết nối với các dịch vụ khác qua API."}

@@ -3,6 +3,7 @@
 # ================================
 requests==2.32.3            # HTTP client (health-check vLLM /v1/models, backend calls)
 ujson==5.10.0               # Ultra-fast JSON parsing
+vllm
 
 # ================================
 #  Web Framework (FastAPI stack)
@@ -40,3 +41,9 @@ starlette==0.37.2           # FastAPI base framework (CORS, middleware, routing)
 #  Logging / Monitoring
 # ================================
 loguru==0.7.2               # Clean, structured logging
+
+torch
+numpy 
+transformers
+datasets
+peft

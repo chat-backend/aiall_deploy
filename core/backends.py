@@ -11,54 +11,31 @@ from typing import List
 from config import BACKENDS_CONFIG, DRAIN_CONFIG, DEFAULT_BACKENDS
 
 
-# ============================================================
-#  UTILS
-# ============================================================
-
 def log(msg: str) -> None:
     print(f"[BACKENDS] {msg}")
 
 
 def atomic_write(path: Path, content: str) -> None:
-    """Ghi file an toàn, tránh lỗi khi đang đọc/ghi."""
     tmp = path.with_suffix(".tmp")
     tmp.write_text(content)
     tmp.replace(path)
 
 
 def normalize_backend(backend: str) -> str:
-    """Chuẩn hóa backend: lowercase + strip."""
     return backend.strip().lower()
 
 
-def validate_backend_format(backend: str) -> bool:
-    """
-    Backend hợp lệ:
-    - host:port
-    - hoặc http://host:port
-    - hoặc https://host:port
-    """
+def strip_protocol(backend: str) -> str:
     backend = backend.lower().strip()
+    return backend.replace("http://", "").replace("https://", "")
 
-    if backend.startswith("http://"):
-        backend = backend.replace("http://", "")
-    elif backend.startswith("https://"):
-        backend = backend.replace("https://", "")
 
+def validate_backend_format(backend: str) -> bool:
+    backend = strip_protocol(backend)
     if ":" not in backend:
         return False
-
     host, port = backend.split(":", 1)
     return bool(host) and port.isdigit()
-
-
-def strip_protocol(backend: str) -> str:
-    """Loại bỏ http:// hoặc https:// nếu có."""
-    backend = backend.lower().strip()
-    return (
-        backend.replace("http://", "")
-               .replace("https://", "")
-    )
 
 
 # ============================================================
@@ -66,15 +43,14 @@ def strip_protocol(backend: str) -> str:
 # ============================================================
 
 def load_backends() -> List[str]:
-    """Load danh sách backend từ file backends.conf."""
     BACKENDS_CONFIG.parent.mkdir(parents=True, exist_ok=True)
 
     if not BACKENDS_CONFIG.exists():
         atomic_write(
             BACKENDS_CONFIG,
-            "\n".join(DEFAULT_BACKENDS) + "\n"
+            "\n".join(normalize_backend(strip_protocol(b)) for b in DEFAULT_BACKENDS) + "\n"
         )
-        return [normalize_backend(b) for b in DEFAULT_BACKENDS]
+        return [normalize_backend(strip_protocol(b)) for b in DEFAULT_BACKENDS]
 
     return [
         normalize_backend(strip_protocol(line))
@@ -84,7 +60,6 @@ def load_backends() -> List[str]:
 
 
 def save_backends(backends: List[str]) -> None:
-    """Lưu danh sách backend."""
     BACKENDS_CONFIG.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(BACKENDS_CONFIG, "\n".join(backends) + "\n")
 
@@ -94,7 +69,6 @@ def save_backends(backends: List[str]) -> None:
 # ============================================================
 
 def load_drain_list() -> List[str]:
-    """Load danh sách backend đang bị drain."""
     if not DRAIN_CONFIG.exists():
         return []
 
@@ -106,7 +80,6 @@ def load_drain_list() -> List[str]:
 
 
 def get_active_backends() -> List[str]:
-    """Trả về danh sách backend đang active (không bị drain)."""
     backends = load_backends()
     drains = load_drain_list()
     return [b for b in backends if b not in drains]
@@ -151,11 +124,10 @@ def remove_backend(backend: str) -> None:
         save_backends(backends)
         log(f"🗑 Removed backend: {backend}")
 
-    # Remove from drain list
     if DRAIN_CONFIG.exists():
         drains = load_drain_list()
         drains = [d for d in drains if d != backend]
-        atomic_write(DRAIN_CONFIG, "\n".join(drains) + "\n")
+        atomic_write(DRAIN_CONFIG, "\n".join(drains) + ("\n" if drains else ""))
 
 
 # ============================================================
@@ -186,7 +158,6 @@ def undrain_backend(backend: str) -> None:
 
     drains = load_drain_list()
     drains = [d for d in drains if d != backend]
-    atomic_write(DRAIN_CONFIG, "\n".join(drains) + "\n")
+    atomic_write(DRAIN_CONFIG, "\n".join(drains) + ("\n" if drains else ""))
 
     log(f"🟢 Backend {backend} removed from draining.")
-
