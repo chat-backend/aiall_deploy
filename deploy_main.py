@@ -33,8 +33,17 @@ from config import (
 
 IS_LINUX = platform.system().lower() == "linux"
 
+<<<<<<< HEAD
 if not IS_LINUX:
     print("[DEV] Windows mode detected — deploy_main Linux features disabled")
+=======
+from core.system_services import (
+    install_vllm,
+    configure_vllm_service,
+    install_nginx,
+    install_certbot,
+)
+>>>>>>> 38b366e64ba9eb01fefb72d6bf3e87fcc0f728e7
 
 
 # ============================================================
@@ -68,6 +77,10 @@ if IS_LINUX:
 
 def is_linux() -> bool:
     return IS_LINUX
+
+
+def apt_exists() -> bool:
+    return shutil.which("apt") is not None
 
 
 def apt_exists() -> bool:
@@ -165,11 +178,105 @@ def init_project_config() -> ProjectConfig:
 
 
 # ============================================================
+<<<<<<< HEAD
 #  FULL DEPLOY (LINUX ONLY)
 # ============================================================
 
 def full_deploy() -> None:
     if not IS_LINUX:
+=======
+#  DNS CHECK
+# ============================================================
+
+def check_dns() -> None:
+    if not is_linux():
+        log("[WARN] Non-Linux system — skipping DNS check.")
+        return
+
+    log("[INFO] Checking DNS...")
+    for domain in DOMAINS:
+        result = subprocess.run(["getent", "hosts", domain], capture_output=True)
+        if result.returncode != 0:
+            raise SystemExit(f"[ERROR] DNS for {domain} not resolved.")
+        log(f"[OK] DNS OK for {domain}")
+
+
+# ============================================================
+#  SYSTEM UPDATE
+# ============================================================
+
+def update_system() -> None:
+    if not is_linux():
+        log("[WARN] Non-Linux system — skipping system update.")
+        return
+
+    if not apt_exists():
+        log("[WARN] apt not found — skipping system update.")
+        return
+
+    log("[INFO] Updating system...")
+    run(["apt", "update"])
+    run(["apt", "upgrade", "-y"])
+
+
+# ============================================================
+#  DEPLOY STEPS
+# ============================================================
+
+def deploy_services() -> None:
+    install_vllm()
+    configure_vllm_service()
+    install_certbot()
+    install_nginx()
+
+
+def configure_nginx_and_ssl() -> None:
+    ngx.generate_upstream_block()
+
+    for domain in DOMAINS:
+        ngx.issue_ssl_for_domain(domain)
+        ngx.configure_nginx_site_for_domain(domain)
+
+    ngx.reload_nginx()
+
+
+def finalize_security() -> None:
+    setup_monitoring()
+    setup_backup()
+    setup_firewall()
+
+
+def print_api_info(cfg: ProjectConfig) -> None:
+    log("=== API ENDPOINTS (vLLM / OpenAI) ===")
+    log(f"  BASE_URL       : {cfg.base_url}")
+    log(f"  CHAT_URL       : {cfg.url_chat}")
+    log(f"  COMPLETION_URL : {cfg.url_completion}")
+    log(f"  MODELS_URL     : {cfg.url_models}")
+    log(f"  API_KEY        : {cfg.api_key}")
+    log(f"  TOKEN_SECRET   : {cfg.token_secret}")
+
+    log("[INFO] Test your API (chat/completions):")
+    log(
+        f"curl -X POST {cfg.url_chat} "
+        f"-H \"x-api-key: {cfg.api_key}\" "
+        f"-H \"Content-Type: application/json\" "
+        f"-d '{{\"model\":\"meta-llama/Llama-3.1-8B-Instruct\",\"messages\":[{{\"role\":\"user\",\"content\":\"hello\"}}]}}'"
+    )
+
+    log("[INFO] Test your API (models list / health):")
+    log(
+        f"curl -X GET {cfg.url_models} "
+        f"-H \"x-api-key: {cfg.api_key}\""
+    )
+
+
+# ============================================================
+#  FULL DEPLOY
+# ============================================================
+
+def full_deploy() -> None:
+    if not is_linux():
+>>>>>>> 38b366e64ba9eb01fefb72d6bf3e87fcc0f728e7
         raise SystemExit("[ERROR] Full deploy is only supported on Linux servers.")
 
     require_root()
@@ -302,3 +409,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+

@@ -47,3 +47,7 @@ numpy
 transformers
 datasets
 peft
+sentencepiece
+accelerate
+safetensors
+tokenizers
