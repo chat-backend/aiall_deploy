@@ -45,6 +45,15 @@ DATA_FILE = "aiall_data.jsonl"
 LORA_OUTPUT_DIR = "aiall-lora"
 MERGED_OUTPUT_DIR = "aiall-merged"
 
+# ===== Training config =====
+OUTPUT_DIR = LORA_OUTPUT_DIR          # nơi TrainingArguments ghi checkpoint
+TRAIN_BATCH = 2                       # batch size mỗi device
+GRAD_ACC = 8                          # gradient accumulation steps
+LR = 2e-4                             # learning rate
+EPOCHS = 3                            # số epoch train
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
 
 # ============================================================
 #  REAL-TIME CONTEXT LAYER (STUBS)
@@ -191,8 +200,6 @@ def train_aiall():
         num_train_epochs=EPOCHS,
         logging_steps=20,
         save_steps=200,
-        eval_strategy="steps",   # <— sửa tại đây
-        eval_steps=200,
         save_total_limit=3,
         fp16=True,
     )
