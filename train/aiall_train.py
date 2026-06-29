@@ -184,15 +184,16 @@ def train_aiall():
     )
 
     training_args = TrainingArguments(
-        output_dir="aiall-model",
-        per_device_train_batch_size=1,
-        gradient_accumulation_steps=2,
-        num_train_epochs=3,
-        learning_rate=2e-4,
-        logging_steps=10,
+        output_dir=OUTPUT_DIR,
+        per_device_train_batch_size=TRAIN_BATCH,
+        gradient_accumulation_steps=GRAD_ACC,
+        learning_rate=LR,
+        num_train_epochs=EPOCHS,
+        logging_steps=20,
         save_steps=200,
+        eval_strategy="steps",   # <— sửa tại đây
+        eval_steps=200,
         save_total_limit=3,
-        evaluation_strategy="no",
         fp16=True,
     )
 
