@@ -33,7 +33,6 @@ from config import (
 
 IS_LINUX = platform.system().lower() == "linux"
 
-<<<<<<< HEAD
 if not IS_LINUX:
     print("[DEV] Windows mode detected — deploy_main Linux features disabled")
 =======
@@ -43,8 +42,6 @@ from core.system_services import (
     install_nginx,
     install_certbot,
 )
->>>>>>> 38b366e64ba9eb01fefb72d6bf3e87fcc0f728e7
-
 
 # ============================================================
 #  IMPORT LINUX-ONLY MODULES SAFELY
@@ -178,7 +175,6 @@ def init_project_config() -> ProjectConfig:
 
 
 # ============================================================
-<<<<<<< HEAD
 #  FULL DEPLOY (LINUX ONLY)
 # ============================================================
 
@@ -276,7 +272,6 @@ def print_api_info(cfg: ProjectConfig) -> None:
 
 def full_deploy() -> None:
     if not is_linux():
->>>>>>> 38b366e64ba9eb01fefb72d6bf3e87fcc0f728e7
         raise SystemExit("[ERROR] Full deploy is only supported on Linux servers.")
 
     require_root()
