@@ -35,7 +35,7 @@ IS_LINUX = platform.system().lower() == "linux"
 
 if not IS_LINUX:
     print("[DEV] Windows mode detected — deploy_main Linux features disabled")
-=======
+
 from core.system_services import (
     install_vllm,
     configure_vllm_service,
@@ -74,10 +74,6 @@ if IS_LINUX:
 
 def is_linux() -> bool:
     return IS_LINUX
-
-
-def apt_exists() -> bool:
-    return shutil.which("apt") is not None
 
 
 def apt_exists() -> bool:
@@ -175,12 +171,6 @@ def init_project_config() -> ProjectConfig:
 
 
 # ============================================================
-#  FULL DEPLOY (LINUX ONLY)
-# ============================================================
-
-def full_deploy() -> None:
-    if not IS_LINUX:
-=======
 #  DNS CHECK
 # ============================================================
 
@@ -249,20 +239,41 @@ def print_api_info(cfg: ProjectConfig) -> None:
     log(f"  COMPLETION_URL : {cfg.url_completion}")
     log(f"  MODELS_URL     : {cfg.url_models}")
     log(f"  API_KEY        : {cfg.api_key}")
-    log(f"  TOKEN_SECRET   : {cfg.token_secret}")
+    log(f"  MODEL_TOKEN    : {cfg.model_token}")
 
     log("[INFO] Test your API (chat/completions):")
     log(
         f"curl -X POST {cfg.url_chat} "
         f"-H \"x-api-key: {cfg.api_key}\" "
         f"-H \"Content-Type: application/json\" "
-        f"-d '{{\"model\":\"meta-llama/Llama-3.1-8B-Instruct\",\"messages\":[{{\"role\":\"user\",\"content\":\"hello\"}}]}}'"
+        f"-d '{{"
+            f"\"model\": \"aiall-merged\", "
+            f"\"messages\": [{{\"role\": \"user\", \"content\": \"Xin chào AIALL, bạn đang hoạt động chứ?\"}}]"
+        f"}}'"
     )
 
-    log("[INFO] Test your API (models list / health):")
+    log("[INFO] Test your API (text completions):")
+    log(
+        f"curl -X POST {cfg.url_completion} "
+        f"-H \"x-api-key: {cfg.api_key}\" "
+        f"-H \"Content-Type: application/json\" "
+        f"-d '{{"
+            f"\"model\": \"aiall-merged\", "
+            f"\"prompt\": \"Viết một câu chào thân thiện bằng tiếng Việt.\""
+        f"}}'"
+    )
+
+    log("[INFO] Test your API (models list):")
     log(
         f"curl -X GET {cfg.url_models} "
         f"-H \"x-api-key: {cfg.api_key}\""
+    )
+
+    log("[INFO] Test internal AIALL backend (FastAPI routes):")
+    log(
+        f"curl -X POST {cfg.base_url}/aiall/chat "
+        f"-H \"Content-Type: application/json\" "
+        f"-d '{{\"prompt\": \"Xin chào AIALL\"}}'"
     )
 
 
@@ -283,34 +294,12 @@ def full_deploy() -> None:
     if not backends:
         log("[WARN] No backends registered. API will not function until you add one.")
 
-    log("[INFO] Checking DNS...")
-    for domain in DOMAINS:
-        result = subprocess.run(["getent", "hosts", domain], capture_output=True)
-        if result.returncode != 0:
-            raise SystemExit(f"[ERROR] DNS for {domain} not resolved.")
-        log(f"[OK] DNS OK for {domain}")
+    check_dns()
+    update_system()
 
-    if apt_exists():
-        log("[INFO] Updating system...")
-        run(["apt", "update"])
-        run(["apt", "upgrade", "-y"])
-
-    install_vllm()
-    configure_vllm_service()
-    install_certbot()
-    install_nginx()
-
-    ngx.generate_upstream_block()
-
-    for domain in DOMAINS:
-        ngx.issue_ssl_for_domain(domain)
-        ngx.configure_nginx_site_for_domain(domain)
-
-    ngx.reload_nginx()
-
-    setup_monitoring()
-    setup_backup()
-    setup_firewall()
+    deploy_services()
+    configure_nginx_and_ssl()
+    finalize_security()
 
     try:
         health_check()
@@ -318,6 +307,7 @@ def full_deploy() -> None:
     except SystemExit as e:
         log(f"[WARN] Health-check failed: {e}")
 
+    print_api_info(cfg)
     log("[OK] Core deploy completed.")
 
 
@@ -404,5 +394,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
