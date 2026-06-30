@@ -1,28 +1,27 @@
 # train/serve_aiall.py
 #!/usr/bin/env python3
 """
-AIALL – Serve merged model (FastAPI, Real-Time Context, port 8001)
+AIALL – Serve merged model (FastAPI, Real-Time Context, port 8001, CPU-Optimized, Streaming)
 ------------------------------------------------------------------
-- Load merged model from aiall-merged/
-- Expose HTTP API for chat:
-    POST /aiall/chat
-      { "prompt": "..." }
-
-- Tích hợp lớp Real-Time Context giống train/aiall_train.py
-- Dùng cho backend 127.0.0.1:8001 (đã đăng ký vào vLLM cluster)
-- Tối ưu hiệu năng cho CPU (mkldnn, float32, thread limit)
+- Tối ưu:
+  - mkldnn + thread limit
+  - max_new_tokens thấp hơn (64)
+  - no_grad + single-batch
+  - thêm endpoint streaming /aiall/chat-stream
 """
 
 import os
 import platform
 from datetime import datetime
+from typing import AsyncGenerator
 
 import torch
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-# ===== CPU OPTIMIZATION =====
+# CPU OPTIMIZATION
 torch.backends.mkldnn.enabled = True
 torch.set_num_threads(max(1, os.cpu_count() // 2))
 
@@ -34,8 +33,17 @@ class HotSwapPayload(BaseModel):
     model_dir: str
 
 
+class ChatRequest(BaseModel):
+    prompt: str
+
+
+class ChatResponse(BaseModel):
+    prompt: str
+    response: str
+
+
 # ============================================================
-#  REAL-TIME CONTEXT LAYER (GIỐNG train/aiall_train.py)
+#  REAL-TIME CONTEXT LAYER
 # ============================================================
 
 def build_realtime_context(prompt: str) -> str:
@@ -107,18 +115,9 @@ model, tokenizer = load_aiall_for_inference(MERGED_OUTPUT_DIR)
 # ============================================================
 
 app = FastAPI(
-    title="AIALL Merged Model – Inference Service",
-    version="1.0.0",
+    title="AIALL Merged Model – Inference Service (CPU-Optimized, Streaming)",
+    version="1.1.0",
 )
-
-
-class ChatRequest(BaseModel):
-    prompt: str
-
-
-class ChatResponse(BaseModel):
-    prompt: str
-    response: str
 
 
 @app.get("/aiall/health")
@@ -130,6 +129,10 @@ def health():
         "linux": IS_LINUX,
     }
 
+
+# ============================================================
+#  NORMAL CHAT (non-streaming)
+# ============================================================
 
 @app.post("/aiall/chat", response_model=ChatResponse)
 def aiall_chat(req: ChatRequest):
@@ -147,7 +150,7 @@ def aiall_chat(req: ChatRequest):
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            max_new_tokens=128,   # giảm để phản hồi nhanh hơn trên CPU
+            max_new_tokens=64,    # giảm thêm để phản hồi nhanh hơn
             do_sample=True,
             temperature=0.7,
             top_p=0.9,
@@ -156,6 +159,51 @@ def aiall_chat(req: ChatRequest):
     decoded = tokenizer.decode(outputs[0], skip_special_tokens=True)
     return ChatResponse(prompt=prompt, response=decoded)
 
+
+# ============================================================
+#  STREAMING CHAT (chunked text)
+# ============================================================
+
+async def stream_generate(prompt: str) -> AsyncGenerator[str, None]:
+    realtime_context = build_realtime_context(prompt)
+    text = realtime_context + f"Instruction: {prompt}\nAnswer:"
+
+    inputs = tokenizer(
+        text,
+        return_tensors="pt",
+        add_special_tokens=True,
+    )
+
+    # generate full output once, then stream chunks
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=64,
+            do_sample=True,
+            temperature=0.7,
+            top_p=0.9,
+        )
+
+    decoded = tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+    # stream in small chunks
+    chunk_size = 32
+    for i in range(0, len(decoded), chunk_size):
+        yield decoded[i:i + chunk_size]
+
+
+@app.post("/aiall/chat-stream")
+async def aiall_chat_stream(req: ChatRequest):
+    async def event_stream():
+        async for chunk in stream_generate(req.prompt):
+            yield chunk
+
+    return StreamingResponse(event_stream(), media_type="text/plain")
+
+
+# ============================================================
+#  RELOAD / HOT-SWAP
+# ============================================================
 
 @app.post("/aiall/reload")
 def reload_model():
@@ -179,6 +227,7 @@ def hot_swap_model(payload: HotSwapPayload):
 
 if __name__ == "__main__":
     import uvicorn
-    # Chạy trên 0.0.0.0:8001 để khớp với register_aiall_backend
     uvicorn.run(app, host="0.0.0.0", port=8001)
+
+
 

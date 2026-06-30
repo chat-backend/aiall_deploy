@@ -1,15 +1,16 @@
 # train/aiall_train.py
 #!/usr/bin/env python3
 """
-AIALL – LoRA Training & Real-Time Inference Module (CPU-Optimized, Balanced Speed & Quality)
---------------------------------------------------
-- Train LoRA trên base model Qwen2.5-1.5B (tối ưu cho CPU, ~40–60 phút)
-- Lưu adapter vào aiall-lora/
-- Merge LoRA vào full model aiall-merged/
-- Cập nhật MODEL_TOKEN
-- Đăng ký backend vào vLLM cluster (Linux-only)
-- Load merged model để inference
-- Tích hợp lớp Real-Time Context (thời gian, web/db/events/finance/weather/news/calendar)
+AIALL – LoRA Training & Real-Time Inference Module (CPU-Optimized, Extreme 3.0 ~15 minutes)
+------------------------------------------------------------------
+- Cực hạn 3.0:
+  - MAX_SAMPLES = 100
+  - MAX_LEN = 128
+  - batch size = 4
+  - LoRA r = 4 (nhẹ hơn)
+  - warmup thấp
+  - logging/save thưa hơn
+  - early-stop đơn giản theo số step
 """
 
 import os
@@ -30,43 +31,45 @@ from peft import LoraConfig, get_peft_model, PeftModel
 from secrets import token_hex
 from config import MODEL_TOKEN_FILE
 
-# Bật MKL-DNN để tối ưu CPU
+# CPU EXTREME OPTIMIZATION 3.0
 torch.backends.mkldnn.enabled = True
+torch.set_num_threads(max(1, os.cpu_count() // 2))
 
 IS_LINUX = platform.system().lower().startswith("linux")
 
-# ===== Backend + Nginx integration =====
+# Backend + Nginx integration
 import core.backends as be
 if IS_LINUX:
     import core.nginx as ngx
 else:
-    ngx = None  # Nginx không dùng trên Windows / non-Linux
+    ngx = None
 
 BASE_MODEL = "Qwen/Qwen2.5-1.5B"
 DATA_FILE = os.path.join(os.path.dirname(__file__), "aiall_data.jsonl")
 LORA_OUTPUT_DIR = "aiall-lora"
 MERGED_OUTPUT_DIR = "aiall-merged"
 
-# ===== Training config (CPU-optimized, balanced) =====
+# Training config – tuned for ~15 minutes on CPU
 OUTPUT_DIR = LORA_OUTPUT_DIR
-TRAIN_BATCH = 1
+TRAIN_BATCH = 4          # tăng batch size
 GRAD_ACC = 1
 LR = 2e-4
 EPOCHS = 1
-MAX_LEN = 256
-MAX_SAMPLES = 500          # giới hạn nhẹ để giữ chất lượng nhưng giảm thời gian
+MAX_LEN = 128            # giảm context mạnh
+MAX_SAMPLES = 100        # giảm số mẫu mạnh
+
+EARLY_STOP_MAX_STEPS = 400  # dừng sớm nếu vượt quá số step này
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Giới hạn số thread để tránh oversubscription
-torch.set_num_threads(max(1, os.cpu_count() // 2))
-
 
 # ============================================================
-#  REAL-TIME CONTEXT LAYER (STUBS)
+#  REAL-TIME CONTEXT LAYER
 # ============================================================
 
 def build_realtime_context(prompt: str) -> str:
+    from datetime import datetime
+
     parts = []
 
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -121,7 +124,7 @@ def load_base_model():
         BASE_MODEL,
         device_map="cpu",
     )
-    model = model.to(torch.float32)          # CPU: float32 ổn định và nhanh hơn bf16
+    model = model.to(torch.float32)
     model.gradient_checkpointing_enable()
     model.config.use_cache = False
 
@@ -129,7 +132,7 @@ def load_base_model():
 
 
 # ============================================================
-#  LOAD + TOKENIZE DATASET (CPU-optimized, balanced)
+#  LOAD + TOKENIZE DATASET (CPU-optimized, extreme 3.0)
 # ============================================================
 
 def load_dataset_tokenized(tokenizer):
@@ -138,7 +141,6 @@ def load_dataset_tokenized(tokenizer):
 
     dataset = load_dataset("json", data_files={"train": DATA_FILE})["train"]
 
-    # Giới hạn số mẫu để thời gian train < 1 tiếng nhưng vẫn đủ đa dạng
     if len(dataset) > MAX_SAMPLES:
         dataset = dataset.select(range(MAX_SAMPLES))
 
@@ -160,16 +162,16 @@ def load_dataset_tokenized(tokenizer):
 
 
 # ============================================================
-#  BUILD LoRA MODEL (CPU-optimized, balanced)
+#  BUILD LoRA MODEL (CPU-optimized, lighter)
 # ============================================================
 
 def build_lora_model(base_model):
     lora_config = LoraConfig(
-        r=8,
-        lora_alpha=16,
+        r=4,                    # nhẹ hơn
+        lora_alpha=8,
         target_modules=[
             "q_proj", "k_proj", "v_proj", "o_proj",
-            "up_proj", "down_proj",   # bỏ gate_proj để giảm tải CPU
+            "up_proj", "down_proj",
         ],
         lora_dropout=0.05,
         bias="none",
@@ -179,8 +181,19 @@ def build_lora_model(base_model):
 
 
 # ============================================================
-#  TRAIN AIALL (LoRA, CPU-optimized, balanced)
+#  TRAIN AIALL (LoRA, CPU-optimized, extreme 3.0)
 # ============================================================
+
+class EarlyStopTrainer(Trainer):
+    def __init__(self, max_steps: int, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._max_steps = max_steps
+
+    def training_step(self, model, inputs):
+        if self.state.global_step >= self._max_steps:
+            self.control.should_training_stop = True
+        return super().training_step(model, inputs)
+
 
 def train_aiall():
     if not IS_LINUX:
@@ -200,8 +213,8 @@ def train_aiall():
         gradient_accumulation_steps=GRAD_ACC,
         learning_rate=LR,
         num_train_epochs=EPOCHS,
-        logging_steps=10,
-        save_steps=200,
+        logging_steps=40,      # thưa hơn
+        save_steps=1200,       # thưa hơn
         save_total_limit=1,
 
         fp16=False,
@@ -210,15 +223,15 @@ def train_aiall():
 
         optim="adamw_torch",
         max_grad_norm=0.3,
-        warmup_ratio=0.03,
-
-        dataloader_num_workers=2,   # tăng tốc dataloader
+        warmup_ratio=0.01,     # giảm warmup
+        dataloader_num_workers=2,
         report_to="none",
     )
 
     lora_model = build_lora_model(base_model)
 
-    trainer = Trainer(
+    trainer = EarlyStopTrainer(
+        max_steps=EARLY_STOP_MAX_STEPS,
         model=lora_model,
         args=training_args,
         train_dataset=tokenized_dataset,
@@ -234,13 +247,13 @@ def train_aiall():
     new_token = token_hex(64)
     MODEL_TOKEN_FILE.write_text(f"AIALL_MODEL_TOKEN={new_token}\n")
     print(f"=== NEW MODEL_TOKEN GENERATED === {new_token}")
-    print("=== TRAINING DONE. ADAPTER SAVED TO aiall-lora ===")
+    print("=== TRAINING DONE. ADAPTER SAVED TO aiall-lora (EXTREME 3.0) ===")
 
     with open("/root/aiall_deploy/model_history.log", "a") as h:
         h.write(
-            f"[TRAIN_BALANCED] {datetime.now().isoformat()} "
+            f"[TRAIN_EXTREME_3] {datetime.now().isoformat()} "
             f"model_dir={LORA_OUTPUT_DIR} "
-            f"version=balanced "
+            f"version=extreme_3 "
             f"checksum=none\n"
         )
 
@@ -250,7 +263,7 @@ def train_aiall():
 # ============================================================
 
 def merge_lora():
-    print("=== MERGING LoRA INTO FULL MODEL (CPU MODE) ===")
+    print("=== MERGING LoRA INTO FULL MODEL (CPU MODE, EXTREME 3.0) ===")
 
     if not os.path.exists(LORA_OUTPUT_DIR):
         raise SystemExit(f"[ERROR] LoRA adapter not found: {LORA_OUTPUT_DIR}")
@@ -270,9 +283,9 @@ def merge_lora():
 
     with open("/root/aiall_deploy/model_history.log", "a") as h:
         h.write(
-            f"[MERGE_BALANCED] {datetime.now().isoformat()} "
+            f"[MERGE_EXTREME_3] {datetime.now().isoformat()} "
             f"model_dir={MERGED_OUTPUT_DIR} "
-            f"version=balanced "
+            f"version=extreme_3 "
             f"checksum=none\n"
         )
 
@@ -325,10 +338,7 @@ def load_aiall_for_inference():
 def chat(model, tokenizer, prompt: str):
     realtime_context = build_realtime_context(prompt)
 
-    text = (
-        realtime_context +
-        f"Instruction: {prompt}\nAnswer:"
-    )
+    text = realtime_context + f"Instruction: {prompt}\nAnswer:"
 
     inputs = tokenizer(text, return_tensors="pt", add_special_tokens=True)
 
@@ -342,4 +352,7 @@ def chat(model, tokenizer, prompt: str):
         )
 
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+
+
 
