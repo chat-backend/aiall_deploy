@@ -1,9 +1,9 @@
 # train/aiall_train.py
 #!/usr/bin/env python3
 """
-AIALL – LoRA Training & Real-Time Inference Module (CPU-Optimized)
+AIALL – LoRA Training & Real-Time Inference Module (CPU-Optimized, Balanced Speed & Quality)
 --------------------------------------------------
-- Train LoRA trên base model Qwen2.5-1.5B (tối ưu cho CPU)
+- Train LoRA trên base model Qwen2.5-1.5B (tối ưu cho CPU, ~40–60 phút)
 - Lưu adapter vào aiall-lora/
 - Merge LoRA vào full model aiall-merged/
 - Cập nhật MODEL_TOKEN
@@ -30,6 +30,9 @@ from peft import LoraConfig, get_peft_model, PeftModel
 from secrets import token_hex
 from config import MODEL_TOKEN_FILE
 
+# Bật MKL-DNN để tối ưu CPU
+torch.backends.mkldnn.enabled = True
+
 IS_LINUX = platform.system().lower().startswith("linux")
 
 # ===== Backend + Nginx integration =====
@@ -44,15 +47,19 @@ DATA_FILE = os.path.join(os.path.dirname(__file__), "aiall_data.jsonl")
 LORA_OUTPUT_DIR = "aiall-lora"
 MERGED_OUTPUT_DIR = "aiall-merged"
 
-# ===== Training config (CPU-optimized) =====
-OUTPUT_DIR = LORA_OUTPUT_DIR          # nơi TrainingArguments ghi checkpoint
-TRAIN_BATCH = 1                       # batch size nhỏ cho CPU
-GRAD_ACC = 4                          # gradient accumulation steps
-LR = 2e-4                             # learning rate
-EPOCHS = 1                            # giảm epoch để train nhanh hơn
-MAX_LEN = 256                         # giảm độ dài để nhẹ hơn
+# ===== Training config (CPU-optimized, balanced) =====
+OUTPUT_DIR = LORA_OUTPUT_DIR
+TRAIN_BATCH = 1
+GRAD_ACC = 1
+LR = 2e-4
+EPOCHS = 1
+MAX_LEN = 256
+MAX_SAMPLES = 500          # giới hạn nhẹ để giữ chất lượng nhưng giảm thời gian
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Giới hạn số thread để tránh oversubscription
+torch.set_num_threads(max(1, os.cpu_count() // 2))
 
 
 # ============================================================
@@ -99,6 +106,7 @@ def build_realtime_context(prompt: str) -> str:
 
     return "\n".join(parts) + "\n\n"
 
+
 # ============================================================
 #  LOAD BASE MODEL (CPU-optimized)
 # ============================================================
@@ -107,18 +115,21 @@ def load_base_model():
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
+    tokenizer.model_max_length = MAX_LEN
 
-    # Load model trên CPU, cho phép offload nếu cần
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         device_map="cpu",
     )
-    model.gradient_checkpointing_enable()  # giảm memory cho CPU
+    model = model.to(torch.float32)          # CPU: float32 ổn định và nhanh hơn bf16
+    model.gradient_checkpointing_enable()
+    model.config.use_cache = False
+
     return model, tokenizer
 
 
 # ============================================================
-#  LOAD + TOKENIZE DATASET (CPU-optimized)
+#  LOAD + TOKENIZE DATASET (CPU-optimized, balanced)
 # ============================================================
 
 def load_dataset_tokenized(tokenizer):
@@ -126,6 +137,10 @@ def load_dataset_tokenized(tokenizer):
         raise SystemExit(f"[ERROR] Dataset file not found: {DATA_FILE}")
 
     dataset = load_dataset("json", data_files={"train": DATA_FILE})["train"]
+
+    # Giới hạn số mẫu để thời gian train < 1 tiếng nhưng vẫn đủ đa dạng
+    if len(dataset) > MAX_SAMPLES:
+        dataset = dataset.select(range(MAX_SAMPLES))
 
     def preprocess(example):
         instruction = example["instruction"]
@@ -145,18 +160,18 @@ def load_dataset_tokenized(tokenizer):
 
 
 # ============================================================
-#  BUILD LoRA MODEL (CPU-optimized)
+#  BUILD LoRA MODEL (CPU-optimized, balanced)
 # ============================================================
 
 def build_lora_model(base_model):
     lora_config = LoraConfig(
-        r=4,                      # giảm r để nhẹ hơn trên CPU
+        r=8,
         lora_alpha=16,
         target_modules=[
             "q_proj", "k_proj", "v_proj", "o_proj",
-            "gate_proj", "up_proj", "down_proj",
+            "up_proj", "down_proj",   # bỏ gate_proj để giảm tải CPU
         ],
-        lora_dropout=0.1,
+        lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
     )
@@ -164,12 +179,12 @@ def build_lora_model(base_model):
 
 
 # ============================================================
-#  TRAIN AIALL (LoRA, CPU-optimized)
+#  TRAIN AIALL (LoRA, CPU-optimized, balanced)
 # ============================================================
 
 def train_aiall():
     if not IS_LINUX:
-        raise SystemExit("[ERROR] Training is only supported on Linux.")
+        raise SystemExit("[ERROR] Training is only supported on Linux."]
 
     base_model, tokenizer = load_base_model()
     tokenized_dataset = load_dataset_tokenized(tokenizer)
@@ -185,14 +200,20 @@ def train_aiall():
         gradient_accumulation_steps=GRAD_ACC,
         learning_rate=LR,
         num_train_epochs=EPOCHS,
-        logging_steps=20,
-        save_steps=500,
-        save_total_limit=2,
+        logging_steps=10,
+        save_steps=200,
+        save_total_limit=1,
 
-        # CPU MODE — chuẩn cho Transformers mới
-        fp16=False,          # CPU: không dùng fp16
-        bf16=False,          # CPU: không dùng bf16
-        use_cpu=True,        # Thay thế no_cuda=True (đã bị loại bỏ)
+        fp16=False,
+        bf16=False,
+        use_cpu=True,
+
+        optim="adamw_torch",
+        max_grad_norm=0.3,
+        warmup_ratio=0.03,
+
+        dataloader_num_workers=2,   # tăng tốc dataloader
+        report_to="none",
     )
 
     lora_model = build_lora_model(base_model)
@@ -215,14 +236,14 @@ def train_aiall():
     print(f"=== NEW MODEL_TOKEN GENERATED === {new_token}")
     print("=== TRAINING DONE. ADAPTER SAVED TO aiall-lora ===")
 
-    # Ghi lịch sử TRAIN
     with open("/root/aiall_deploy/model_history.log", "a") as h:
         h.write(
-            f"[TRAIN] {datetime.now().isoformat()} "
+            f"[TRAIN_BALANCED] {datetime.now().isoformat()} "
             f"model_dir={LORA_OUTPUT_DIR} "
-            f"version=unknown "
+            f"version=balanced "
             f"checksum=none\n"
         )
+
 
 # ============================================================
 #  MERGE LoRA → FULL MODEL (CPU-optimized)
@@ -238,6 +259,8 @@ def merge_lora():
         BASE_MODEL,
         device_map="cpu",
     )
+    base_model = base_model.to(torch.float32)
+
     merged = PeftModel.from_pretrained(base_model, LORA_OUTPUT_DIR)
     merged = merged.merge_and_unload()
 
@@ -245,14 +268,14 @@ def merge_lora():
     merged.save_pretrained(MERGED_OUTPUT_DIR)
     print("=== MERGED MODEL SAVED TO aiall-merged ===")
 
-    # Ghi lịch sử MERGE
     with open("/root/aiall_deploy/model_history.log", "a") as h:
         h.write(
-            f"[MERGE] {datetime.now().isoformat()} "
+            f"[MERGE_BALANCED] {datetime.now().isoformat()} "
             f"model_dir={MERGED_OUTPUT_DIR} "
-            f"version=unknown "
+            f"version=balanced "
             f"checksum=none\n"
         )
+
 
 # ============================================================
 #  REGISTER AIALL BACKEND (URL + MODEL)
@@ -290,6 +313,7 @@ def load_aiall_for_inference():
         MERGED_OUTPUT_DIR,
         device_map="cpu",
     )
+    model = model.to(torch.float32)
     model.eval()
     return model, tokenizer
 
@@ -311,11 +335,11 @@ def chat(model, tokenizer, prompt: str):
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            max_new_tokens=128,   # giảm để nhẹ hơn trên CPU
+            max_new_tokens=128,
             do_sample=True,
             temperature=0.7,
             top_p=0.9,
         )
 
-
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
+
