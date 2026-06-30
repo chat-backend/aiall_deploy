@@ -188,8 +188,11 @@ def train_aiall():
         logging_steps=20,
         save_steps=500,
         save_total_limit=2,
+
+        # CPU MODE — chuẩn cho Transformers mới
         fp16=False,          # CPU: không dùng fp16
-        no_cuda=True,        # ép chạy trên CPU
+        bf16=False,          # CPU: không dùng bf16
+        use_cpu=True,        # Thay thế no_cuda=True (đã bị loại bỏ)
     )
 
     lora_model = build_lora_model(base_model)
