@@ -184,7 +184,7 @@ def build_lora_model(base_model):
 
 def train_aiall():
     if not IS_LINUX:
-        raise SystemExit("[ERROR] Training is only supported on Linux."]
+        raise SystemExit("[ERROR] Training is only supported on Linux.")
 
     base_model, tokenizer = load_base_model()
     tokenized_dataset = load_dataset_tokenized(tokenizer)
