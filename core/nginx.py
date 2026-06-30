@@ -73,7 +73,7 @@ def generate_upstream_block() -> None:
 
 
 # ============================================================
-#  NGINX SITE FOR DOMAIN
+#  NGINX SITE FOR DOMAIN (FULL STACK: /v1/, /aiall/, /system/)
 # ============================================================
 
 def build_nginx_site_content(domain: str) -> str:
@@ -100,7 +100,9 @@ server {{
     add_header X-XSS-Protection "1; mode=block" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
-    # OpenAI-compatible API (vLLM backend)
+    # ============================
+    # OpenAI-compatible API (vLLM cluster)
+    # ============================
     location /v1/ {{
         proxy_pass http://vllm_cluster;
 
@@ -115,6 +117,28 @@ server {{
         proxy_send_timeout 3600;
         proxy_buffering off;
         proxy_request_buffering off;
+    }}
+
+    # ============================
+    # AIALL merged model (cluster backend)
+    # ============================
+    location /aiall/ {{
+        proxy_pass http://vllm_cluster;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }}
+
+    # ============================
+    # Gateway System Service (FastAPI)
+    # ============================
+    location /system/ {{
+        proxy_pass http://127.0.0.1:6001;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }}
 }}
 """.lstrip()
@@ -134,13 +158,14 @@ def configure_nginx_site_for_domain(domain: str) -> None:
 
 
 # ============================================================
-#  AIALL ROUTE (FASTAPI)
+#  (OPTIONAL) LEGACY AIALL ROUTE – CÓ THỂ BỎ NẾU DÙNG SITE CHÍNH
 # ============================================================
 
 def configure_aiall_route():
     """
     Route nội bộ cho FastAPI /aiall/
     Đồng bộ với upstream vllm_cluster
+    (Có thể không cần nếu đã cấu hình trong server chính)
     """
 
     conf = f"""
@@ -194,3 +219,4 @@ def reload_nginx() -> None:
 
     log("Reloading nginx...")
     run(["nginx", "-s", "reload"])
+
