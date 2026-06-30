@@ -1,16 +1,15 @@
 # train/aiall_train.py
 #!/usr/bin/env python3
 """
-AIALL – LoRA Training & Real-Time Inference Module
+AIALL – LoRA Training & Real-Time Inference Module (CPU-Optimized)
 --------------------------------------------------
-- Train LoRA trên base model Qwen2.5-1.5B
+- Train LoRA trên base model Qwen2.5-1.5B (tối ưu cho CPU)
 - Lưu adapter vào aiall-lora/
 - Merge LoRA vào full model aiall-merged/
 - Cập nhật MODEL_TOKEN
-- Đăng ký backend vào gateway (Linux-only)
+- Đăng ký backend vào vLLM cluster (Linux-only)
 - Load merged model để inference
 - Tích hợp lớp Real-Time Context (thời gian, web/db/events/finance/weather/news/calendar)
-  để mô hình không bị "đóng băng" theo thời gian train.
 """
 
 import os
@@ -41,16 +40,17 @@ else:
     ngx = None  # Nginx không dùng trên Windows / non-Linux
 
 BASE_MODEL = "Qwen/Qwen2.5-1.5B"
-DATA_FILE = "aiall_data.jsonl"
+DATA_FILE = os.path.join(os.path.dirname(__file__), "aiall_data.jsonl")
 LORA_OUTPUT_DIR = "aiall-lora"
 MERGED_OUTPUT_DIR = "aiall-merged"
 
-# ===== Training config =====
+# ===== Training config (CPU-optimized) =====
 OUTPUT_DIR = LORA_OUTPUT_DIR          # nơi TrainingArguments ghi checkpoint
-TRAIN_BATCH = 2                       # batch size mỗi device
-GRAD_ACC = 8                          # gradient accumulation steps
+TRAIN_BATCH = 1                       # batch size nhỏ cho CPU
+GRAD_ACC = 4                          # gradient accumulation steps
 LR = 2e-4                             # learning rate
-EPOCHS = 3                            # số epoch train
+EPOCHS = 1                            # giảm epoch để train nhanh hơn
+MAX_LEN = 256                         # giảm độ dài để nhẹ hơn
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -60,51 +60,34 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # ============================================================
 
 def build_realtime_context(prompt: str) -> str:
-    """
-    Xây dựng context thời gian thực để inject vào prompt.
-    Đây là lớp "không đóng băng" – mô hình luôn biết thời gian hiện tại
-    và có thể mở rộng ra web/db/finance/weather/news/calendar.
-
-    Hiện tại: stub, bạn có thể nối với các service thực tế sau.
-    """
-
     parts = []
 
-    # Thời gian hiện tại
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     parts.append(f"[TIME] Current datetime: {current_time}")
 
     pl = prompt.lower()
 
-    # Web search (stub)
     if any(w in pl for w in ["tìm", "search", "google", "tra cứu"]):
         parts.append("[WEB] Web search: (stub) dữ liệu thời gian thực sẽ được tích hợp tại đây.")
 
-    # Database (stub)
     if "cơ sở dữ liệu" in pl or "database" in pl or "db" in pl:
         parts.append("[DB] Database: (stub) kết quả truy vấn DB sẽ được tích hợp tại đây.")
 
-    # Event timeline (stub)
     if "sự kiện" in pl or "timeline" in pl:
         parts.append("[EVENTS] Timeline: (stub) danh sách sự kiện gần đây sẽ được tích hợp tại đây.")
 
-    # Financial data (stub)
     if any(w in pl for w in ["giá", "bitcoin", "btc", "chứng khoán", "stock"]):
         parts.append("[FINANCE] Financial: (stub) giá tài chính thời gian thực sẽ được tích hợp tại đây.")
 
-    # Weather data (stub)
     if "thời tiết" in pl or "weather" in pl:
         parts.append("[WEATHER] Weather: (stub) dữ liệu thời tiết thời gian thực sẽ được tích hợp tại đây.")
 
-    # News data (stub)
     if "tin tức" in pl or "news" in pl or "báo" in pl:
         parts.append("[NEWS] News: (stub) tin tức mới nhất sẽ được tích hợp tại đây.")
 
-    # Calendar awareness (stub)
     if any(w in pl for w in ["lịch", "ngày", "tháng", "năm", "calendar"]):
         parts.append("[CALENDAR] Calendar: hệ thống nhận biết ngày/tháng/năm hiện tại và bối cảnh thời gian.")
 
-    # Hướng dẫn mô hình về tính thời gian thực
     parts.append(
         "[REAL-TIME SYSTEM NOTICE] "
         "Nếu câu hỏi liên quan đến dữ liệu có thể thay đổi theo thời gian "
@@ -118,7 +101,7 @@ def build_realtime_context(prompt: str) -> str:
 
 
 # ============================================================
-#  LOAD BASE MODEL
+#  LOAD BASE MODEL (CPU-optimized)
 # ============================================================
 
 def load_base_model():
@@ -126,12 +109,17 @@ def load_base_model():
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
 
-    model = AutoModelForCausalLM.from_pretrained(BASE_MODEL)
+    # Load model trên CPU, cho phép offload nếu cần
+    model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        device_map="cpu",
+    )
+    model.gradient_checkpointing_enable()  # giảm memory cho CPU
     return model, tokenizer
 
 
 # ============================================================
-#  LOAD + TOKENIZE DATASET
+#  LOAD + TOKENIZE DATASET (CPU-optimized)
 # ============================================================
 
 def load_dataset_tokenized(tokenizer):
@@ -147,7 +135,7 @@ def load_dataset_tokenized(tokenizer):
 
         tokens = tokenizer(
             text,
-            max_length=512,
+            max_length=MAX_LEN,
             truncation=True,
             padding="max_length",
         )
@@ -158,18 +146,18 @@ def load_dataset_tokenized(tokenizer):
 
 
 # ============================================================
-#  BUILD LoRA MODEL
+#  BUILD LoRA MODEL (CPU-optimized)
 # ============================================================
 
 def build_lora_model(base_model):
     lora_config = LoraConfig(
-        r=8,
+        r=4,                      # giảm r để nhẹ hơn trên CPU
         lora_alpha=16,
         target_modules=[
             "q_proj", "k_proj", "v_proj", "o_proj",
             "gate_proj", "up_proj", "down_proj",
         ],
-        lora_dropout=0.05,
+        lora_dropout=0.1,
         bias="none",
         task_type="CAUSAL_LM",
     )
@@ -177,7 +165,7 @@ def build_lora_model(base_model):
 
 
 # ============================================================
-#  TRAIN AIALL (LoRA)
+#  TRAIN AIALL (LoRA, CPU-optimized)
 # ============================================================
 
 def train_aiall():
@@ -199,9 +187,10 @@ def train_aiall():
         learning_rate=LR,
         num_train_epochs=EPOCHS,
         logging_steps=20,
-        save_steps=200,
-        save_total_limit=3,
-        fp16=True,
+        save_steps=500,
+        save_total_limit=2,
+        fp16=False,          # CPU: không dùng fp16
+        no_cuda=True,        # ép chạy trên CPU
     )
 
     lora_model = build_lora_model(base_model)
@@ -226,16 +215,19 @@ def train_aiall():
 
 
 # ============================================================
-#  MERGE LoRA → FULL MODEL
+#  MERGE LoRA → FULL MODEL (CPU-optimized)
 # ============================================================
 
 def merge_lora():
-    print("=== MERGING LoRA INTO FULL MODEL ===")
+    print("=== MERGING LoRA INTO FULL MODEL (CPU MODE) ===")
 
     if not os.path.exists(LORA_OUTPUT_DIR):
         raise SystemExit(f"[ERROR] LoRA adapter not found: {LORA_OUTPUT_DIR}")
 
-    base_model = AutoModelForCausalLM.from_pretrained(BASE_MODEL)
+    base_model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        device_map="cpu",
+    )
     merged = PeftModel.from_pretrained(base_model, LORA_OUTPUT_DIR)
     merged = merged.merge_and_unload()
 
@@ -248,14 +240,7 @@ def merge_lora():
 #  REGISTER AIALL BACKEND (URL + MODEL)
 # ============================================================
 
-def register_aiall_backend(host="127.0.0.1", port=8000):
-    """
-    Tự động đăng ký mô hình AIALL vào gateway (Linux-only):
-    - add backend
-    - generate upstream block
-    - reload nginx
-    - tạo URL chính thức: https://api.aiallplatform.com/aiall/
-    """
+def register_aiall_backend(host="127.0.0.1", port=8001):
     if not IS_LINUX:
         print("[WARN] Backend registration skipped — Linux-only feature.")
         return
@@ -272,7 +257,7 @@ def register_aiall_backend(host="127.0.0.1", port=8000):
 
 
 # ============================================================
-#  LOAD AIALL FOR INFERENCE
+#  LOAD AIALL FOR INFERENCE (CPU-optimized)
 # ============================================================
 
 def load_aiall_for_inference():
@@ -283,13 +268,16 @@ def load_aiall_for_inference():
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
 
-    model = AutoModelForCausalLM.from_pretrained(MERGED_OUTPUT_DIR)
+    model = AutoModelForCausalLM.from_pretrained(
+        MERGED_OUTPUT_DIR,
+        device_map="cpu",
+    )
     model.eval()
     return model, tokenizer
 
 
 # ============================================================
-#  CHAT FUNCTION (WITH REAL-TIME CONTEXT)
+#  CHAT FUNCTION (WITH REAL-TIME CONTEXT, CPU-optimized)
 # ============================================================
 
 def chat(model, tokenizer, prompt: str):
@@ -305,11 +293,10 @@ def chat(model, tokenizer, prompt: str):
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            max_new_tokens=256,
+            max_new_tokens=128,   # giảm để nhẹ hơn trên CPU
             do_sample=True,
             temperature=0.7,
             top_p=0.9,
         )
 
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
-
