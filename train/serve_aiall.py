@@ -10,6 +10,7 @@ AIALL – Serve merged model (FastAPI, Real-Time Context, port 8001)
 
 - Tích hợp lớp Real-Time Context giống train/aiall_train.py
 - Dùng cho backend 127.0.0.1:8001 (đã đăng ký vào vLLM cluster)
+- Tối ưu hiệu năng cho CPU (mkldnn, float32, thread limit)
 """
 
 import os
@@ -21,8 +22,11 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-IS_LINUX = platform.system().lower().startswith("linux")
+# ===== CPU OPTIMIZATION =====
+torch.backends.mkldnn.enabled = True
+torch.set_num_threads(max(1, os.cpu_count() // 2))
 
+IS_LINUX = platform.system().lower().startswith("linux")
 MERGED_OUTPUT_DIR = "aiall-merged"
 
 
@@ -76,7 +80,7 @@ def build_realtime_context(prompt: str) -> str:
 
 
 # ============================================================
-#  LOAD MERGED MODEL
+#  LOAD MERGED MODEL (CPU-optimized)
 # ============================================================
 
 def load_aiall_for_inference(model_dir: str):
@@ -87,7 +91,11 @@ def load_aiall_for_inference(model_dir: str):
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
 
-    model = AutoModelForCausalLM.from_pretrained(model_dir)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_dir,
+        device_map="cpu",
+    )
+    model = model.to(torch.float32)
     model.eval()
     return model, tokenizer
 
@@ -130,12 +138,16 @@ def aiall_chat(req: ChatRequest):
 
     text = realtime_context + f"Instruction: {prompt}\nAnswer:"
 
-    inputs = tokenizer(text, return_tensors="pt", add_special_tokens=True)
+    inputs = tokenizer(
+        text,
+        return_tensors="pt",
+        add_special_tokens=True,
+    )
 
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            max_new_tokens=256,
+            max_new_tokens=128,   # giảm để phản hồi nhanh hơn trên CPU
             do_sample=True,
             temperature=0.7,
             top_p=0.9,
@@ -167,6 +179,6 @@ def hot_swap_model(payload: HotSwapPayload):
 
 if __name__ == "__main__":
     import uvicorn
-    # Chạy trên 127.0.0.1:8001 để khớp với register_aiall_backend
+    # Chạy trên 0.0.0.0:8001 để khớp với register_aiall_backend
     uvicorn.run(app, host="0.0.0.0", port=8001)
 
