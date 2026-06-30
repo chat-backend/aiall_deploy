@@ -241,42 +241,6 @@ def print_api_info(cfg: ProjectConfig) -> None:
     log(f"  API_KEY        : {cfg.api_key}")
     log(f"  MODEL_TOKEN    : {cfg.model_token}")
 
-    log("[INFO] Test your API (chat/completions):")
-    log(
-        f"curl -X POST {cfg.url_chat} "
-        f"-H \"x-api-key: {cfg.api_key}\" "
-        f"-H \"Content-Type: application/json\" "
-        f"-d '{{"
-            f"\"model\": \"aiall-merged\", "
-            f"\"messages\": [{{\"role\": \"user\", \"content\": \"Xin chào AIALL, bạn đang hoạt động chứ?\"}}]"
-        f"}}'"
-    )
-
-    log("[INFO] Test your API (text completions):")
-    log(
-        f"curl -X POST {cfg.url_completion} "
-        f"-H \"x-api-key: {cfg.api_key}\" "
-        f"-H \"Content-Type: application/json\" "
-        f"-d '{{"
-            f"\"model\": \"aiall-merged\", "
-            f"\"prompt\": \"Viết một câu chào thân thiện bằng tiếng Việt.\""
-        f"}}'"
-    )
-
-    log("[INFO] Test your API (models list):")
-    log(
-        f"curl -X GET {cfg.url_models} "
-        f"-H \"x-api-key: {cfg.api_key}\""
-    )
-
-    log("[INFO] Test internal AIALL backend (FastAPI routes):")
-    log(
-        f"curl -X POST {cfg.base_url}/aiall/chat "
-        f"-H \"Content-Type: application/json\" "
-        f"-d '{{\"prompt\": \"Xin chào AIALL\"}}'"
-    )
-
-
 # ============================================================
 #  FULL DEPLOY
 # ============================================================
