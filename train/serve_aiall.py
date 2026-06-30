@@ -19,12 +19,16 @@ from datetime import datetime
 import torch
 from fastapi import FastAPI
 from pydantic import BaseModel
-
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 IS_LINUX = platform.system().lower().startswith("linux")
 
 MERGED_OUTPUT_DIR = "aiall-merged"
+
+
+class HotSwapPayload(BaseModel):
+    model_dir: str
+
 
 # ============================================================
 #  REAL-TIME CONTEXT LAYER (GIỐNG train/aiall_train.py)
@@ -75,20 +79,20 @@ def build_realtime_context(prompt: str) -> str:
 #  LOAD MERGED MODEL
 # ============================================================
 
-def load_aiall_for_inference():
-    if not os.path.exists(MERGED_OUTPUT_DIR):
-        raise SystemExit(f"[ERROR] Merged model not found: {MERGED_OUTPUT_DIR}")
+def load_aiall_for_inference(model_dir: str):
+    if not os.path.exists(model_dir):
+        raise SystemExit(f"[ERROR] Merged model not found: {model_dir}")
 
-    tokenizer = AutoTokenizer.from_pretrained(MERGED_OUTPUT_DIR)
+    tokenizer = AutoTokenizer.from_pretrained(model_dir)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
 
-    model = AutoModelForCausalLM.from_pretrained(MERGED_OUTPUT_DIR)
+    model = AutoModelForCausalLM.from_pretrained(model_dir)
     model.eval()
     return model, tokenizer
 
 
-model, tokenizer = load_aiall_for_inference()
+model, tokenizer = load_aiall_for_inference(MERGED_OUTPUT_DIR)
 
 # ============================================================
 #  FASTAPI APP
@@ -111,7 +115,12 @@ class ChatResponse(BaseModel):
 
 @app.get("/aiall/health")
 def health():
-    return {"status": "ok", "model_dir": MERGED_OUTPUT_DIR}
+    return {
+        "status": "ok",
+        "model_dir": MERGED_OUTPUT_DIR,
+        "platform": platform.system(),
+        "linux": IS_LINUX,
+    }
 
 
 @app.post("/aiall/chat", response_model=ChatResponse)
@@ -136,7 +145,28 @@ def aiall_chat(req: ChatRequest):
     return ChatResponse(prompt=prompt, response=decoded)
 
 
+@app.post("/aiall/reload")
+def reload_model():
+    global model, tokenizer
+    model, tokenizer = load_aiall_for_inference(MERGED_OUTPUT_DIR)
+    return {"status": "ok", "message": "Model reloaded successfully."}
+
+
+@app.post("/aiall/hot-swap")
+def hot_swap_model(payload: HotSwapPayload):
+    global model, tokenizer, MERGED_OUTPUT_DIR
+    new_dir = payload.model_dir
+
+    if not os.path.exists(new_dir):
+        return {"status": "error", "message": f"Model dir not found: {new_dir}"}
+
+    MERGED_OUTPUT_DIR = new_dir
+    model, tokenizer = load_aiall_for_inference(MERGED_OUTPUT_DIR)
+    return {"status": "ok", "message": f"Model hot-swapped to {new_dir}"}
+
+
 if __name__ == "__main__":
     import uvicorn
     # Chạy trên 127.0.0.1:8001 để khớp với register_aiall_backend
     uvicorn.run(app, host="0.0.0.0", port=8001)
+
