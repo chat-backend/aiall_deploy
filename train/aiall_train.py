@@ -99,7 +99,6 @@ def build_realtime_context(prompt: str) -> str:
 
     return "\n".join(parts) + "\n\n"
 
-
 # ============================================================
 #  LOAD BASE MODEL (CPU-optimized)
 # ============================================================
@@ -213,6 +212,14 @@ def train_aiall():
     print(f"=== NEW MODEL_TOKEN GENERATED === {new_token}")
     print("=== TRAINING DONE. ADAPTER SAVED TO aiall-lora ===")
 
+    # Ghi lịch sử TRAIN
+    with open("/root/aiall_deploy/model_history.log", "a") as h:
+        h.write(
+            f"[TRAIN] {datetime.now().isoformat()} "
+            f"model_dir={LORA_OUTPUT_DIR} "
+            f"version=unknown "
+            f"checksum=none\n"
+        )
 
 # ============================================================
 #  MERGE LoRA → FULL MODEL (CPU-optimized)
@@ -235,6 +242,14 @@ def merge_lora():
     merged.save_pretrained(MERGED_OUTPUT_DIR)
     print("=== MERGED MODEL SAVED TO aiall-merged ===")
 
+    # Ghi lịch sử MERGE
+    with open("/root/aiall_deploy/model_history.log", "a") as h:
+        h.write(
+            f"[MERGE] {datetime.now().isoformat()} "
+            f"model_dir={MERGED_OUTPUT_DIR} "
+            f"version=unknown "
+            f"checksum=none\n"
+        )
 
 # ============================================================
 #  REGISTER AIALL BACKEND (URL + MODEL)
@@ -298,5 +313,6 @@ def chat(model, tokenizer, prompt: str):
             temperature=0.7,
             top_p=0.9,
         )
+
 
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
