@@ -30,6 +30,16 @@ from routes.aiall_inference import router as aiall_inference_router
 from routes.aiall_extended import router as aiall_extended_router
 from routes.aiall_tools import router as aiall_tools_router
 from routes.aiall_advanced import router as aiall_advanced_router
+from routes.aiall_model_info import router as model_info_router
+from routes.aiall_model_stats import router as model_stats_router
+from routes.aiall_model_reload import router as model_reload_router
+from routes.aiall_cluster_info import router as cluster_info_router
+from routes.aiall_backend_stats import router as backend_stats_router
+from routes.aiall_model_checksum import router as model_checksum_router
+from routes.aiall_model_history_extended import router as model_history_extended_router
+from routes.aiall_cluster_repair_smart import router as cluster_repair_smart_router
+from routes.aiall_cluster_rebalance_smart import router as cluster_rebalance_smart_router
+from routes.aiall_model_hot_swap import router as model_hot_swap_router
 
 IS_LINUX = platform.system().lower().startswith("linux")
 
@@ -341,7 +351,16 @@ app.include_router(aiall_inference_router)
 app.include_router(aiall_extended_router)
 app.include_router(aiall_tools_router)
 app.include_router(aiall_advanced_router)
-
+app.include_router(model_info_router)
+app.include_router(model_stats_router)
+app.include_router(model_reload_router)
+app.include_router(cluster_info_router)
+app.include_router(backend_stats_router)
+app.include_router(model_checksum_router)
+app.include_router(model_history_extended_router)
+app.include_router(cluster_repair_smart_router)
+app.include_router(cluster_rebalance_smart_router)
+app.include_router(model_hot_swap_router)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=6001)
