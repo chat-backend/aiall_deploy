@@ -35,9 +35,11 @@ EMAIL: str = "openaimanage@gmail.com"
 IS_WINDOWS = platform.system().lower().startswith("win")
 
 if IS_WINDOWS:
-    CONFIG_DIR = Path("vllm_config")  # Windows local dev
+    # Windows local dev: dùng thư mục trong project
+    CONFIG_DIR = Path("vllm_config")
 else:
-    CONFIG_DIR = Path("/etc/vllm")    # Linux production
+    # Linux production: dùng /etc/vllm
+    CONFIG_DIR = Path("/etc/vllm")
 
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -48,6 +50,7 @@ MODEL_TOKEN_FILE = CONFIG_DIR / "model_token"
 BACKENDS_CONFIG = CONFIG_DIR / "backends.conf"
 DRAIN_CONFIG = CONFIG_DIR / "backends.drain"
 
+# Backend mặc định nếu chưa có cấu hình
 DEFAULT_BACKENDS = ["127.0.0.1:8000"]
 
 # ============================================================
@@ -179,4 +182,5 @@ __all__ = [
     "read_model_token",
     "write_model_token",
 ]
+
 
