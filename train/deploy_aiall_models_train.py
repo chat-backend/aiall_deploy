@@ -146,32 +146,8 @@ def build_lora_model(base_model):
 
 
 # ============================================================
-#  TRAIN AIALL (QUALITY + SPEED, EARLY-STOP BY LOSS)
+#  TRAIN AIALL (QUALITY MODE – FULL EPOCH, NO EARLY-STOP)
 # ============================================================
-
-class LossEarlyStopTrainer(Trainer):
-    def __init__(self, min_improvement: float, patience: int, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._min_improvement = min_improvement
-        self._patience = patience
-        self._best_loss = None
-        self._no_improve_count = 0
-
-    def training_step(self, model, inputs, num_items_in_batch=None):
-        loss = super().training_step(model, inputs, num_items_in_batch)
-        loss_value = loss.detach().cpu().item() if hasattr(loss, "detach") else float(loss)
-
-        if self._best_loss is None or loss_value < self._best_loss - self._min_improvement:
-            self._best_loss = loss_value
-            self._no_improve_count = 0
-        else:
-            self._no_improve_count += 1
-
-        if self._no_improve_count >= self._patience:
-            self.control.should_training_stop = True
-
-        return loss
-
 
 def train_aiall():
     if not IS_LINUX:
@@ -182,15 +158,16 @@ def train_aiall():
 
     collator = DataCollatorForSeq2Seq(tokenizer=tokenizer, padding=True)
 
+    # FULL TRAIN – chạy đủ epoch, không early-stop
     training_args = TrainingArguments(
         output_dir=OUTPUT_DIR,
         per_device_train_batch_size=TRAIN_BATCH,
         gradient_accumulation_steps=GRAD_ACC,
         learning_rate=LR,
-        num_train_epochs=EPOCHS,
-        logging_steps=40,
-        save_steps=400,
-        save_total_limit=2,
+        num_train_epochs=EPOCHS,          # chạy đủ số epoch
+        logging_steps=20,
+        save_steps=999999,                # không save giữa chừng
+        save_total_limit=1,
         fp16=False,
         bf16=False,
         use_cpu=True,
@@ -203,35 +180,39 @@ def train_aiall():
 
     lora_model = build_lora_model(base_model)
 
-    trainer = LossEarlyStopTrainer(
-        min_improvement=EARLY_STOP_MIN_LOSS_IMPROVEMENT,
-        patience=EARLY_STOP_PATIENCE,
+    # Trainer chuẩn – KHÔNG early-stop
+    trainer = Trainer(
         model=lora_model,
         args=training_args,
         train_dataset=tokenized_dataset,
         data_collator=collator,
     )
 
+    print("=== TRAINING START (FULL EPOCH, NO EARLY-STOP) ===")
     trainer.train()
+    print("=== TRAINING COMPLETE (FULL EPOCH) ===")
 
+    # Save adapter
     os.makedirs(LORA_OUTPUT_DIR, exist_ok=True)
     lora_model.save_pretrained(LORA_OUTPUT_DIR)
     tokenizer.save_pretrained(LORA_OUTPUT_DIR)
 
+    # Generate new model token
     new_token = token_hex(64)
     MODEL_TOKEN_FILE.write_text(f"AIALL_MODEL_TOKEN={new_token}\n")
     print(f"=== NEW MODEL_TOKEN GENERATED === {new_token}")
-    print("=== TRAINING DONE. ADAPTER SAVED TO aiall-lora (QUALITY+SPEED MODE) ===")
+    print("=== ADAPTER SAVED TO aiall-lora (QUALITY MODE) ===")
 
+    # Log
     with open(LOG_FILE, "a") as h:
         h.write(
-            f"[TRAIN_QUALITY_SPEED] {datetime.now().isoformat()} "
-            f"model_dir={LORA_OUTPUT_DIR} version=quality_speed checksum=none\n"
+            f"[TRAIN_FULL_QUALITY] {datetime.now().isoformat()} "
+            f"model_dir={LORA_OUTPUT_DIR} version=full_quality checksum=none\n"
         )
 
 
 # ============================================================
-#  MERGE LoRA → FULL MODEL
+#  MERGE LoRA → FULL MODEL (FIXED – SAVE TOKENIZER)
 # ============================================================
 
 def merge_lora():
@@ -240,16 +221,28 @@ def merge_lora():
     if not os.path.exists(LORA_OUTPUT_DIR):
         raise SystemExit(f"[ERROR] LoRA adapter not found: {LORA_OUTPUT_DIR}")
 
+    # Load base model
     base_model = AutoModelForCausalLM.from_pretrained(BASE_MODEL, device_map="cpu")
     base_model = base_model.to(torch.float32)
 
+    # Load LoRA adapter
     merged = PeftModel.from_pretrained(base_model, LORA_OUTPUT_DIR)
+
+    # Merge LoRA → full model
     merged = merged.merge_and_unload()
 
+    # Save merged model
     os.makedirs(MERGED_OUTPUT_DIR, exist_ok=True)
     merged.save_pretrained(MERGED_OUTPUT_DIR)
-    print("=== MERGED MODEL SAVED TO aiall-merged ===")
 
+    # 🔥 FIX QUAN TRỌNG: Save tokenizer vào merged model
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.save_pretrained(MERGED_OUTPUT_DIR)
+
+    print("=== MERGED MODEL + TOKENIZER SAVED TO aiall-merged ===")
+
+    # Log
     with open(LOG_FILE, "a") as h:
         h.write(
             f"[MERGE_QUALITY_SPEED] {datetime.now().isoformat()} "
@@ -258,22 +251,41 @@ def merge_lora():
 
 
 # ============================================================
-#  REGISTER BACKEND
+#  REGISTER BACKEND (WSL-SAFE + LINUX-FULL + NO-FAIL)
 # ============================================================
 
 def register_aiall_backend(host="127.0.0.1", port=8001):
-    if not IS_LINUX:
-        print("[WARN] Backend registration skipped — Linux-only feature.")
-        return
-
     backend = f"{host}:{port}"
     print(f"=== REGISTER AIALL BACKEND: {backend} ===")
 
-    be.add_backend(backend)
-    ngx.generate_upstream_block()
-    ngx.reload_nginx()
+    # Luôn thêm backend vào danh sách nội bộ (gateway)
+    try:
+        be.add_backend(backend)
+        print(f"[BACKENDS] ✅ Added backend: {backend}")
+    except Exception as e:
+        print(f"[WARN] Could not add backend: {e}")
 
-    print("=== AIALL BACKEND REGISTERED SUCCESSFULLY ===")
+    # Nếu không phải Linux thật → bỏ qua Nginx
+    if not IS_LINUX:
+        print("[WARN] Skipping Nginx registration — not a real Linux environment.")
+        return
+
+    # Kiểm tra thư mục Nginx
+    nginx_conf_dir = "/etc/nginx/conf.d"
+    if not os.path.exists(nginx_conf_dir):
+        print("[WARN] Nginx not installed — skipping upstream generation.")
+        return
+
+    # Thử tạo upstream + reload Nginx
+    try:
+        ngx.generate_upstream_block()
+        ngx.reload_nginx()
+        print("=== AIALL BACKEND REGISTERED SUCCESSFULLY (NGINX MODE) ===")
+    except Exception as e:
+        print(f"[WARN] Nginx reload skipped: {e}")
+        print("[WARN] Backend registration completed WITHOUT Nginx.")
+        return
+
     print("=== URL CHÍNH THỨC: https://api.aiallplatform.com/aiall/ ===")
 
 
@@ -302,16 +314,3 @@ def load_aiall_for_inference():
 
 def chat(model, tokenizer, prompt: str):
     return aiall_chat(model, tokenizer, prompt)
-
-
-
-
-
-
-
-
-
-
-
-
-
