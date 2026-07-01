@@ -63,6 +63,10 @@ EARLY_STOP_PATIENCE = 3                  # số lần liên tiếp không cải 
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# --- LOG FILE (HOME, không dùng /root) ---
+LOG_FILE = os.path.expanduser("~/aiall_logs/model_history.log")
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+
 
 # ============================================================
 #  REAL-TIME CONTEXT LAYER
@@ -239,7 +243,8 @@ def train_aiall():
     print(f"=== NEW MODEL_TOKEN GENERATED === {new_token}")
     print("=== TRAINING DONE. ADAPTER SAVED TO aiall-lora (EXTREME 4.0) ===")
 
-    with open("/root/aiall_deploy/model_history.log", "a") as h:
+    # Ghi log vào HOME
+    with open(LOG_FILE, "a") as h:
         h.write(
             f"[TRAIN_EXTREME_4] {datetime.now().isoformat()} "
             f"model_dir={LORA_OUTPUT_DIR} version=extreme_4 checksum=none\n"
@@ -266,7 +271,8 @@ def merge_lora():
     merged.save_pretrained(MERGED_OUTPUT_DIR)
     print("=== MERGED MODEL SAVED TO aiall-merged ===")
 
-    with open("/root/aiall_deploy/model_history.log", "a") as h:
+    # Ghi log vào HOME
+    with open(LOG_FILE, "a") as h:
         h.write(
             f"[MERGE_EXTREME_4] {datetime.now().isoformat()} "
             f"model_dir={MERGED_OUTPUT_DIR} version=extreme_4 checksum=none\n"
@@ -304,12 +310,12 @@ def load_aiall_for_inference():
     tokenizer = AutoTokenizer.from_pretrained(MERGED_OUTPUT_DIR)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
+    tokenizer.model_max_length = MAX_LEN   # ⭐ FIX QUAN TRỌNG
 
     model = AutoModelForCausalLM.from_pretrained(MERGED_OUTPUT_DIR, device_map="cpu")
     model = model.to(torch.float32)
     model.eval()
     return model, tokenizer
-
 
 # ============================================================
 #  CHAT FUNCTION
@@ -318,7 +324,31 @@ def load_aiall_for_inference():
 def chat(model, tokenizer, prompt: str):
     realtime_context = build_realtime_context(prompt)
     text = realtime_context + f"Instruction: {prompt}\nAnswer:"
-    inputs = tokenizer(text, return_tensors="pt", add_special_tokens=True)
+
+    # Lần 1: tokenize với full context
+    inputs = tokenizer(
+        text,
+        return_tensors="pt",
+        truncation=True,
+        padding=False,
+    )
+
+    # Nếu rỗng → thử lại chỉ với prompt
+    if inputs["input_ids"].numel() == 0:
+        fallback_text = f"Instruction: {prompt}\nAnswer:"
+        inputs = tokenizer(
+            fallback_text,
+            return_tensors="pt",
+            truncation=True,
+            padding=False,
+        )
+
+    # Nếu vẫn rỗng nữa → ép một token tối thiểu
+    if inputs["input_ids"].numel() == 0:
+        inputs = {
+            "input_ids": torch.tensor([[tokenizer.eos_token_id]]),
+            "attention_mask": torch.tensor([[1]]),
+        }
 
     with torch.no_grad():
         outputs = model.generate(
@@ -330,6 +360,10 @@ def chat(model, tokenizer, prompt: str):
         )
 
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+
+
+
 
 
 
