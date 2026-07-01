@@ -35,13 +35,17 @@ from train.aiall_train import (
 IS_LINUX = platform.system().lower().startswith("linux")
 LORA_DIR = "aiall-lora"
 MERGED_DIR = "aiall-merged"
-BACKUP_DIR = "/root/aiall_merged_backup_pipeline_extreme"
-LOG_FILE = "/root/aiall_train_pipeline_extreme.log"
+
+# Dùng HOME thay vì /root
+BACKUP_DIR = os.path.expanduser("~/aiall_merged_backup_pipeline_extreme")
+LOG_FILE = os.path.expanduser("~/aiall_train_pipeline_extreme.log")
 
 
 def log(msg: str):
     print(msg)
     try:
+        # đảm bảo thư mục tồn tại
+        os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
         with open(LOG_FILE, "a") as f:
             f.write(msg + "\n")
     except Exception:
@@ -111,7 +115,6 @@ def step_1_validate_and_preview():
         if size == 0:
             raise RuntimeError("Dataset rỗng sau khi tokenize.")
 
-        # preview vài mẫu
         preview_count = min(3, size)
         for i in range(preview_count):
             log(f"[DATA SAMPLE {i}] {tokenized[i]}")
@@ -152,7 +155,6 @@ def step_3_validate_and_merge():
         rollback_merged_model("STEP 3 – LoRA dir missing")
         sys.exit(1)
 
-    # quick sanity check: LoRA dir không rỗng
     if not os.listdir(LORA_DIR):
         log(f"[ERROR] Thư mục LoRA rỗng: {LORA_DIR}")
         rollback_merged_model("STEP 3 – LoRA empty")
@@ -171,7 +173,6 @@ def step_3_validate_and_merge():
         rollback_merged_model("STEP 3 – merged dir missing")
         sys.exit(1)
 
-    # quick sanity check: merged dir không rỗng
     if not os.listdir(MERGED_DIR):
         log(f"[ERROR] Thư mục merged rỗng: {MERGED_DIR}")
         rollback_merged_model("STEP 3 – merged empty")
@@ -244,6 +245,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
