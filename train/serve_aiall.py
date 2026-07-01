@@ -56,22 +56,16 @@ def build_realtime_context(prompt: str) -> str:
 
     if any(w in pl for w in ["tìm", "search", "google", "tra cứu"]):
         parts.append("[WEB] Web search: (stub) dữ liệu thời gian thực sẽ được tích hợp tại đây.")
-
     if "cơ sở dữ liệu" in pl or "database" in pl or "db" in pl:
         parts.append("[DB] Database: (stub) kết quả truy vấn DB sẽ được tích hợp tại đây.")
-
     if "sự kiện" in pl or "timeline" in pl:
         parts.append("[EVENTS] Timeline: (stub) danh sách sự kiện gần đây sẽ được tích hợp tại đây.")
-
     if any(w in pl for w in ["giá", "bitcoin", "btc", "chứng khoán", "stock"]):
         parts.append("[FINANCE] Financial: (stub) giá tài chính thời gian thực sẽ được tích hợp tại đây.")
-
     if "thời tiết" in pl or "weather" in pl:
         parts.append("[WEATHER] Weather: (stub) dữ liệu thời tiết thời gian thực sẽ được tích hợp tại đây.")
-
     if "tin tức" in pl or "news" in pl or "báo" in pl:
         parts.append("[NEWS] News: (stub) tin tức mới nhất sẽ được tích hợp tại đây.")
-
     if any(w in pl for w in ["lịch", "ngày", "tháng", "năm", "calendar"]):
         parts.append("[CALENDAR] Calendar: hệ thống nhận biết ngày/tháng/năm hiện tại và bối cảnh thời gian.")
 
@@ -98,6 +92,7 @@ def load_aiall_for_inference(model_dir: str):
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
+    tokenizer.model_max_length = 96  # đồng bộ với MAX_LEN bên train
 
     model = AutoModelForCausalLM.from_pretrained(
         model_dir,
@@ -144,13 +139,14 @@ def aiall_chat(req: ChatRequest):
     inputs = tokenizer(
         text,
         return_tensors="pt",
-        add_special_tokens=True,
+        truncation=True,
+        padding=False,
     )
 
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            max_new_tokens=64,    # giảm thêm để phản hồi nhanh hơn
+            max_new_tokens=64,
             do_sample=True,
             temperature=0.7,
             top_p=0.9,
@@ -171,10 +167,10 @@ async def stream_generate(prompt: str) -> AsyncGenerator[str, None]:
     inputs = tokenizer(
         text,
         return_tensors="pt",
-        add_special_tokens=True,
+        truncation=True,
+        padding=False,
     )
 
-    # generate full output once, then stream chunks
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
@@ -186,7 +182,6 @@ async def stream_generate(prompt: str) -> AsyncGenerator[str, None]:
 
     decoded = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-    # stream in small chunks
     chunk_size = 32
     for i in range(0, len(decoded), chunk_size):
         yield decoded[i:i + chunk_size]
@@ -228,6 +223,7 @@ def hot_swap_model(payload: HotSwapPayload):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
+
 
 
 
