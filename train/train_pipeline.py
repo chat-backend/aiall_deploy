@@ -22,7 +22,7 @@ import os
 import shutil
 import traceback
 
-from train.aiall_train import (
+from train.deploy_aiall_models_train import (
     load_base_model,
     load_dataset_tokenized,
     train_aiall,
@@ -36,7 +36,6 @@ IS_LINUX = platform.system().lower().startswith("linux")
 LORA_DIR = "aiall-lora"
 MERGED_DIR = "aiall-merged"
 
-# Dùng HOME thay vì /root
 BACKUP_DIR = os.path.expanduser("~/aiall_merged_backup_pipeline_extreme")
 LOG_FILE = os.path.expanduser("~/aiall_train_pipeline_extreme.log")
 
@@ -44,12 +43,10 @@ LOG_FILE = os.path.expanduser("~/aiall_train_pipeline_extreme.log")
 def log(msg: str):
     print(msg)
     try:
-        # đảm bảo thư mục tồn tại
         os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
         with open(LOG_FILE, "a") as f:
             f.write(msg + "\n")
     except Exception:
-        # nếu log fail thì bỏ qua, không chặn pipeline
         pass
 
 
@@ -108,7 +105,8 @@ def step_0_env_check():
 def step_1_validate_and_preview():
     log("\n=== STEP 1: VALIDATE & PREVIEW DATASET (CPU MODE, FAST) ===")
     try:
-        _, tokenizer = load_base_model()
+        base_model, tokenizer = load_base_model()
+        del base_model  # không cần model ở bước preview
         tokenized = load_dataset_tokenized(tokenizer)
         size = len(tokenized)
         log(f"[DATA] Dataset size sau tokenize: {size}")
@@ -245,10 +243,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
