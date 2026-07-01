@@ -331,6 +331,7 @@ def chat(model, tokenizer, prompt: str):
         return_tensors="pt",
         truncation=True,
         padding=False,
+        add_special_tokens=True,
     )
 
     # Nếu rỗng → thử lại chỉ với prompt
@@ -341,6 +342,7 @@ def chat(model, tokenizer, prompt: str):
             return_tensors="pt",
             truncation=True,
             padding=False,
+            add_special_tokens=True,
         )
 
     # Nếu vẫn rỗng nữa → ép một token tối thiểu
@@ -349,6 +351,12 @@ def chat(model, tokenizer, prompt: str):
             "input_ids": torch.tensor([[tokenizer.eos_token_id]]),
             "attention_mask": torch.tensor([[1]]),
         }
+
+    # ⭐ ÉP BOS TOKEN VÀO ĐẦU INPUT (Qwen2.5 cần điều này)
+    if tokenizer.bos_token_id is not None:
+        bos = torch.tensor([[tokenizer.bos_token_id]])
+        inputs["input_ids"] = torch.cat([bos, inputs["input_ids"]], dim=1)
+        inputs["attention_mask"] = torch.cat([torch.tensor([[1]]), inputs["attention_mask"]], dim=1)
 
     with torch.no_grad():
         outputs = model.generate(
@@ -360,6 +368,7 @@ def chat(model, tokenizer, prompt: str):
         )
 
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
+
 
 
 
