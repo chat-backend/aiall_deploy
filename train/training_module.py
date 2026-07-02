@@ -1,6 +1,6 @@
 # train/training_module.py
 """
-AIALL – Training Module (LoRA)
+AIALL – Training Module (LoRA, CPU-SAFE)
 Tách riêng để file chính gọn, dễ quản lý và nâng cấp.
 """
 
@@ -14,19 +14,18 @@ from transformers import (
     Trainer,
     DataCollatorForLanguageModeling,
 )
-
 from peft import LoraConfig, get_peft_model
 from config import MODEL_TOKEN_FILE
 
 
 def build_lora_adapter(base_model):
     """
-    Tạo LoRA adapter đúng chuẩn như file chính yêu cầu.
+    Tạo LoRA adapter CPU-SAFE, giữ nguyên API cũ.
     """
     lora_config = LoraConfig(
-        r=12,
-        lora_alpha=24,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "up_proj", "down_proj"],
+        r=4,                     # CPU-friendly
+        lora_alpha=16,
+        target_modules=["c_attn"],   # Qwen attention modules tương tự GPT-2
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
@@ -47,11 +46,16 @@ def train_lora_model(
     warmup_steps=40,
 ):
     """
-    Hàm train LoRA – tách riêng để file chính gọn hơn.
-    Đồng bộ 100% với logic file chính.
+    Hàm train LoRA – phiên bản CPU-SAFE.
+    Giữ nguyên API cũ để file chính không cần sửa.
     """
 
-    # Đảm bảo cấu hình training giống file chính
+    # CPU optimization
+    torch.backends.mkldnn.enabled = True
+    torch.set_num_threads(max(1, os.cpu_count() // 2))
+    torch.cuda.is_available = lambda: False
+
+    base_model.to("cpu")
     base_model.gradient_checkpointing_enable()
     base_model.config.use_cache = False
 
@@ -61,7 +65,7 @@ def train_lora_model(
         mlm=False,
     )
 
-    # TrainingArguments
+    # TrainingArguments – CPU-SAFE
     training_args = TrainingArguments(
         output_dir=output_dir,
         per_device_train_batch_size=train_batch,
@@ -71,18 +75,18 @@ def train_lora_model(
         logging_steps=20,
         save_steps=999999,
         save_total_limit=1,
-        fp16=False,
-        bf16=False,
+        fp16=False,              # CPU-safe
+        bf16=False,              # CPU-safe
         optim="adamw_torch",
         warmup_steps=warmup_steps,
-        dataloader_num_workers=2,
+        dataloader_num_workers=0,   # CPU-safe
         report_to="none",
     )
 
-    # Build LoRA adapter (đúng cấu hình)
+    # Build LoRA adapter (CPU-safe)
     lora_model = build_lora_adapter(base_model)
 
-    # Trainer
+    # Trainer CPU-SAFE
     trainer = Trainer(
         model=lora_model,
         args=training_args,
@@ -90,9 +94,9 @@ def train_lora_model(
         data_collator=collator,
     )
 
-    print("=== TRAINING START ===")
+    print("=== TRAINING START (CPU-SAFE) ===")
     trainer.train()
-    print("=== TRAINING COMPLETE ===")
+    print("=== TRAINING COMPLETE (CPU-SAFE) ===")
 
     # Save adapter + tokenizer
     lora_model.save_pretrained(output_dir)
