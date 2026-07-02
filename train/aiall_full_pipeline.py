@@ -1,13 +1,14 @@
-# train/train_pipeline.py
+# train/aiall_full_pipeline.py
 #!/usr/bin/env python3
 """
-AIALL – FULL TRAIN PIPELINE (CPU-Optimized, Extreme + Smart Auto-Rollback)
+AIALL – FULL TRAIN PIPELINE (CPU-Optimized, Smart Auto-Rollback)
 ---------------------------------------------------------------------
+Lifecycle:
 - STEP 0: Environment & sanity checks
 - STEP 1: Validate & preview dataset
-- STEP 2: Train LoRA adapter (fast)
+- STEP 2: Train LoRA adapter (via deploy_aiall_models_train)
 - STEP 3: Validate LoRA + merge → full model
-- STEP 4: Deep smoke test inference (multi-prompt, SAFE CHAT)
+- STEP 4: Deep smoke test inference (SAFE CHAT)
 - STEP 5: Register backend into gateway
 """
 
@@ -27,6 +28,7 @@ from train.deploy_aiall_models_train import (
 )
 
 IS_LINUX = platform.system().lower().startswith("linux")
+
 LORA_DIR = "aiall-lora"
 MERGED_DIR = "aiall-merged"
 
@@ -44,6 +46,10 @@ def log(msg: str):
         pass
 
 
+# ============================================================
+#  ENVIRONMENT & PATH CHECKS
+# ============================================================
+
 def ensure_linux():
     if not IS_LINUX:
         log("[ERROR] Full train pipeline chỉ hỗ trợ trên Linux.")
@@ -57,6 +63,10 @@ def ensure_paths():
         log("[ERROR] Không tìm thấy thư mục train/ trong cwd.")
         sys.exit(1)
 
+
+# ============================================================
+#  BACKUP & ROLLBACK MERGED MODEL
+# ============================================================
 
 def backup_merged_model():
     if os.path.exists(MERGED_DIR):
@@ -89,6 +99,10 @@ def rollback_merged_model(reason: str):
         log("[ROLLBACK] Không có backup để khôi phục.")
 
 
+# ============================================================
+#  STEP 0: ENVIRONMENT & SANITY CHECKS
+# ============================================================
+
 def step_0_env_check():
     log("\n=== STEP 0: ENVIRONMENT & SANITY CHECKS ===")
     ensure_linux()
@@ -96,11 +110,16 @@ def step_0_env_check():
     log("[ENV] Linux OK, paths OK.")
 
 
+# ============================================================
+#  STEP 1: VALIDATE & PREVIEW DATASET
+# ============================================================
+
 def step_1_validate_and_preview():
-    log("\n=== STEP 1: VALIDATE & PREVIEW DATASET (CPU MODE, FAST) ===")
+    log("\n=== STEP 1: VALIDATE & PREVIEW DATASET ===")
     try:
         base_model, tokenizer = load_base_model()
         del base_model
+
         tokenized = load_dataset_tokenized(tokenizer)
         size = len(tokenized)
         log(f"[DATA] Dataset size sau tokenize: {size}")
@@ -116,75 +135,69 @@ def step_1_validate_and_preview():
         rollback_merged_model("STEP 1 – dataset invalid")
         sys.exit(1)
 
-    log("=== STEP 1 DONE: Dataset hợp lệ, có dữ liệu để train. ===")
+    log("=== STEP 1 DONE ===")
 
+
+# ============================================================
+#  STEP 2: TRAIN LoRA ADAPTER
+# ============================================================
 
 def step_2_train_lora():
-    log("\n=== STEP 2: TRAIN LoRA ADAPTER (CPU MODE, FAST) ===")
-    log("⚠ CPU MODE: Training đã được tối ưu để ~30 phút (fast config).")
+    log("\n=== STEP 2: TRAIN LoRA ADAPTER ===")
     try:
         train_aiall()
     except Exception as e:
-        log(f"[ERROR] STEP 2 failed during training: {e}")
+        log(f"[ERROR] STEP 2 failed: {e}")
         log(traceback.format_exc())
         rollback_merged_model("STEP 2 – training failed")
         sys.exit(1)
 
-    if not os.path.exists(LORA_DIR):
-        log(f"[ERROR] Sau khi train không tìm thấy thư mục LoRA: {LORA_DIR}")
-        rollback_merged_model("STEP 2 – LoRA dir missing")
+    if not os.path.exists(LORA_DIR) or not os.listdir(LORA_DIR):
+        log("[ERROR] LoRA adapter không tồn tại hoặc rỗng.")
+        rollback_merged_model("STEP 2 – LoRA invalid")
         sys.exit(1)
 
-    log("=== STEP 2 DONE: LoRA adapter saved to aiall-lora/ ===")
+    log("=== STEP 2 DONE ===")
 
+
+# ============================================================
+#  STEP 3: MERGE LoRA → FULL MODEL
+# ============================================================
 
 def step_3_validate_and_merge():
-    log("\n=== STEP 3: VALIDATE LoRA & MERGE → FULL MODEL (CPU MODE, FAST) ===")
+    log("\n=== STEP 3: MERGE LoRA → FULL MODEL ===")
 
-    if not os.path.exists(LORA_DIR):
-        log(f"[ERROR] Không tìm thấy thư mục LoRA: {LORA_DIR}")
-        log("Bạn cần chạy STEP 2 trước khi merge.")
-        rollback_merged_model("STEP 3 – LoRA dir missing")
-        sys.exit(1)
-
-    if not os.listdir(LORA_DIR):
-        log(f"[ERROR] Thư mục LoRA rỗng: {LORA_DIR}")
-        rollback_merged_model("STEP 3 – LoRA empty")
+    if not os.path.exists(LORA_DIR) or not os.listdir(LORA_DIR):
+        log("[ERROR] LoRA adapter không tồn tại hoặc rỗng.")
+        rollback_merged_model("STEP 3 – LoRA invalid")
         sys.exit(1)
 
     try:
         merge_lora()
     except Exception as e:
-        log(f"[ERROR] STEP 3 failed during merge: {e}")
+        log(f"[ERROR] STEP 3 failed: {e}")
         log(traceback.format_exc())
         rollback_merged_model("STEP 3 – merge failed")
         sys.exit(1)
 
-    if not os.path.exists(MERGED_DIR):
-        log(f"[ERROR] Merge xong nhưng không tìm thấy merged model: {MERGED_DIR}")
-        rollback_merged_model("STEP 3 – merged dir missing")
+    if not os.path.exists(MERGED_DIR) or not os.listdir(MERGED_DIR):
+        log("[ERROR] Merged model không tồn tại hoặc rỗng.")
+        rollback_merged_model("STEP 3 – merged invalid")
         sys.exit(1)
 
-    if not os.listdir(MERGED_DIR):
-        log(f"[ERROR] Thư mục merged rỗng: {MERGED_DIR}")
-        rollback_merged_model("STEP 3 – merged empty")
-        sys.exit(1)
-
-    log("=== STEP 3 DONE: Merged model saved to aiall-merged/ ===")
+    log("=== STEP 3 DONE ===")
 
 
-# SAFE CHAT: không dùng aiall_chat/self_heal, chỉ generate trực tiếp
+# ============================================================
+#  SAFE CHAT (DIRECT GENERATE)
+# ============================================================
+
 def safe_chat(model, tokenizer, prompt: str) -> str:
     import torch
 
-    inputs = tokenizer(
-        prompt,
-        return_tensors="pt",
-        truncation=True,
-        max_length=256,
-    )
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=256)
     if inputs["input_ids"].shape[1] == 0:
-        return "[SMOKE] Input rỗng, bỏ qua."
+        return "[SMOKE] Input rỗng."
 
     with torch.no_grad():
         outputs = model.generate(
@@ -195,62 +208,65 @@ def safe_chat(model, tokenizer, prompt: str) -> str:
             top_p=0.92,
             pad_token_id=tokenizer.eos_token_id,
         )
-    text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return text.strip()
+    return tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
 
+
+# ============================================================
+#  STEP 4: DEEP SMOKE TEST
+# ============================================================
 
 def step_4_deep_smoke_test():
-    log("\n=== STEP 4: DEEP SMOKE TEST INFERENCE (CPU MODE, FAST, SAFE CHAT) ===")
+    log("\n=== STEP 4: DEEP SMOKE TEST INFERENCE ===")
 
     if not os.path.exists(MERGED_DIR):
-        log(f"[ERROR] Không tìm thấy merged model: {MERGED_DIR}")
-        log("Bạn cần chạy STEP 3 trước khi inference.")
-        rollback_merged_model("STEP 4 – merged dir missing")
+        log("[ERROR] Merged model không tồn tại.")
+        rollback_merged_model("STEP 4 – merged missing")
         sys.exit(1)
 
     try:
         model, tokenizer = load_aiall_for_inference()
         prompts = [
             "Xin chào AIALL, hãy giới thiệu ngắn gọn về bản thân.",
-            "Giải thích ngắn gọn về khái niệm 'LoRA' trong huấn luyện mô hình ngôn ngữ.",
-            "Hãy trả lời bằng tiếng Việt: Tại sao cần kiểm tra sức khỏe mô hình sau khi train?",
+            "Giải thích ngắn gọn về khái niệm LoRA.",
+            "Tại sao cần kiểm tra mô hình sau khi train?",
         ]
         for i, p in enumerate(prompts):
             response = safe_chat(model, tokenizer, p)
             log(f"[SMOKE {i}] Prompt: {p}")
             log(f"[SMOKE {i}] Response: {response}")
-            if not response or len(response.strip()) == 0:
-                log(f"[WARN] Response rỗng cho prompt index {i}, nhưng không rollback (SAFE MODE).")
     except Exception as e:
-        log(f"[ERROR] STEP 4 failed during inference (SAFE CHAT): {e}")
+        log(f"[ERROR] STEP 4 failed: {e}")
         log(traceback.format_exc())
-        # KHÔNG rollback vì lỗi này thường do style/generate, không phải hỏng model
-        log("[WARN] Bỏ qua lỗi STEP 4, tiếp tục pipeline (model vẫn load được).")
+        log("[WARN] Không rollback vì lỗi inference không phá model.")
 
-    log("=== STEP 4 DONE: Deep smoke test inference SAFE MODE ===")
+    log("=== STEP 4 DONE ===")
 
+
+# ============================================================
+#  STEP 5: REGISTER BACKEND
+# ============================================================
 
 def step_5_register_backend():
-    log("\n=== STEP 5: REGISTER BACKEND INTO GATEWAY (CPU MODE) ===")
-
-    if not os.path.exists(MERGED_DIR):
-        log("[WARN] Chưa có merged model, nhưng vẫn cố đăng ký backend.")
-        log("Khuyến nghị: chỉ register backend sau khi STEP 3 hoàn tất.")
+    log("\n=== STEP 5: REGISTER BACKEND ===")
 
     try:
         register_aiall_backend("127.0.0.1", 8001)
     except Exception as e:
-        log(f"[ERROR] STEP 5 failed during backend registration: {e}")
+        log(f"[ERROR] STEP 5 failed: {e}")
         log(traceback.format_exc())
-        rollback_merged_model("STEP 5 – backend registration failed")
+        rollback_merged_model("STEP 5 – backend failed")
         sys.exit(1)
 
-    log("=== STEP 5 DONE: Backend registered into vLLM cluster ===")
-    log("=== URL CHÍNH THỨC: https://api.aiallplatform.com/aiall/ ===")
+    log("=== STEP 5 DONE ===")
+    log("=== URL: https://api.aiallplatform.com/aiall/ ===")
 
+
+# ============================================================
+#  MAIN ENTRYPOINT
+# ============================================================
 
 def main():
-    log("=== AIALL FULL TRAIN PIPELINE EXTREME START (CPU MODE, FAST + SMART AUTO-ROLLBACK) ===")
+    log("=== AIALL FULL TRAIN PIPELINE START ===")
     step_0_env_check()
     backup_merged_model()
     step_1_validate_and_preview()
@@ -258,7 +274,7 @@ def main():
     step_3_validate_and_merge()
     step_4_deep_smoke_test()
     step_5_register_backend()
-    log("\n=== AIALL FULL TRAIN PIPELINE EXTREME COMPLETE (CPU MODE, FAST) ===")
+    log("=== AIALL FULL TRAIN PIPELINE COMPLETE ===")
 
 
 if __name__ == "__main__":
