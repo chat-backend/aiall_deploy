@@ -1,46 +1,35 @@
 # config.py
 #!/usr/bin/env python3
 """
-AIALL vLLM Gateway – System Configuration (V6-PRODUCTION-AIALL)
+AIALL Gateway – Unified Configuration (Ubuntu-Friendly, Project-Local)
 ----------------------------------------------------------------------
-- API chuẩn OpenAI (vLLM)
-- Không prefix
-- Backend normalize
-- Path normalize
-- Health check /v1/models
-- Hỗ trợ multi-backend
-- Chạy được trên Windows + Linux
-- Phân biệt rõ API_KEY (client) và MODEL_TOKEN (internal)
+- Domain chính thức: api.aiallplatform.com
+- Không dùng /etc/vllm (chỉ dùng thư mục dự án)
+- Tự tạo file config nếu thiếu
+- Một file duy nhất cho toàn bộ hệ thống (train + inference + gateway)
 """
 
 from pathlib import Path
 from dataclasses import dataclass
-from typing import List
+from typing import List, Dict
 import os
-import platform
 
-print("[CONFIG] Loaded AIALL vLLM Gateway configuration (V6-PRODUCTION-AIALL)")
+print("[CONFIG] Loaded AIALL Gateway configuration (LOCAL-UBUNTU-MODE)")
 
 # ============================================================
-#  DOMAIN & EMAIL CONFIG
+#  DOMAIN CONFIG
 # ============================================================
 
 DOMAINS: List[str] = ["api.aiallplatform.com"]
 EMAIL: str = "openaimanage@gmail.com"
 
 # ============================================================
-#  BASE DIRECTORIES (CROSS-PLATFORM)
+#  BASE DIRECTORIES
 # ============================================================
 
-IS_WINDOWS = platform.system().lower().startswith("win")
+BASE_DIR = Path(__file__).resolve().parent
 
-if IS_WINDOWS:
-    # Windows local dev: dùng thư mục trong project
-    CONFIG_DIR = Path("vllm_config")
-else:
-    # Linux production: dùng /etc/vllm
-    CONFIG_DIR = Path("/etc/vllm")
-
+CONFIG_DIR = BASE_DIR / "config"
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 PROJECT_CONFIG_FILE = CONFIG_DIR / "project.conf"
@@ -50,19 +39,47 @@ MODEL_TOKEN_FILE = CONFIG_DIR / "model_token"
 BACKENDS_CONFIG = CONFIG_DIR / "backends.conf"
 DRAIN_CONFIG = CONFIG_DIR / "backends.drain"
 
-# Backend mặc định nếu chưa có cấu hình
-DEFAULT_BACKENDS = ["127.0.0.1:8000"]
+DEFAULT_BACKENDS = ["127.0.0.1:8001"]
+
+UPSTREAM_FILE = CONFIG_DIR / "nginx_upstream.conf"
+LOG_FILE = CONFIG_DIR / "vllm_deploy.log"
 
 # ============================================================
-#  NGINX CONFIG PATHS (Linux only)
+#  LOGGING
 # ============================================================
 
-if IS_WINDOWS:
-    UPSTREAM_FILE = Path("nginx_upstream.conf")
-    LOG_FILE = Path("vllm_deploy.log")
-else:
-    UPSTREAM_FILE = Path("/etc/nginx/conf.d/vllm-upstream.conf")
-    LOG_FILE = Path("/var/log/vllm-deploy.log")
+def log(msg: str):
+    print(f"[CONFIG-LOG] {msg}")
+
+# ============================================================
+#  AUTO FIX CONFIG
+# ============================================================
+
+def ensure_config_files() -> None:
+    """Tự tạo file config nếu thiếu."""
+
+    if not PROJECT_CONFIG_FILE.exists():
+        log(f"project.conf missing → creating default at {PROJECT_CONFIG_FILE}")
+        PROJECT_CONFIG_FILE.write_text(
+            "CONFIG_VERSION=1.0\n"
+            "BASE_URL=https://api.aiallplatform.com\n"
+            "API_CHAT=/v1/chat/completions\n"
+            "API_COMPLETION=/v1/completions\n"
+            "API_MODELS=/v1/models\n"
+            "API_KEY=dev-local\n"
+            "DEFAULT_MAX_TOKENS=10000\n"
+            "DEFAULT_MIN_TOKENS=5000\n"
+            "DEFAULT_TEMPERATURE=0.7\n"
+            "DEFAULT_TOP_P=0.9\n"
+        )
+
+    if not API_KEY_FILE.exists():
+        log(f"api_key missing → creating default at {API_KEY_FILE}")
+        API_KEY_FILE.write_text("dev-local\n")
+
+    if not MODEL_TOKEN_FILE.exists():
+        log(f"model_token missing → creating default at {MODEL_TOKEN_FILE}")
+        MODEL_TOKEN_FILE.write_text("AIALL_MODEL_TOKEN=dev-local\n")
 
 # ============================================================
 #  PROJECT CONFIG STRUCTURE
@@ -72,31 +89,22 @@ else:
 class ProjectConfig:
     config_version: str = "1.0"
 
-    # URL chính thức của dự án AIALL
     base_url: str = os.getenv("AIALL_BASE_URL", "https://api.aiallplatform.com")
 
-    # API chuẩn OpenAI/vLLM
     api_chat: str = "/v1/chat/completions"
     api_completion: str = "/v1/completions"
     api_models: str = "/v1/models"
 
-    # API Key dành cho người dùng
     api_key: str = ""
 
-    # Token dành cho mô hình nội bộ (khác API Key)
-    model_token: str = ""
-
-    # Default params (nâng cấp theo yêu cầu)
     default_max_tokens: int = 10000
     default_min_tokens: int = 5000
     default_temperature: float = 0.7
     default_top_p: float = 0.9
 
-    # Chuẩn hóa path
     def normalize(self, path: str) -> str:
         return path if path.startswith("/") else f"/{path}"
 
-    # Tạo URL đầy đủ cho người dùng cuối
     def full(self, path: str) -> str:
         return self.base_url + self.normalize(path)
 
@@ -112,12 +120,10 @@ class ProjectConfig:
     def url_models(self) -> str:
         return self.full(self.api_models)
 
-    # Tạo URL backend vLLM
     def backend_url(self, backend: str, path: str) -> str:
         backend = backend if backend.startswith("http") else f"http://{backend}"
         return backend + self.normalize(path)
 
-    # URL health-check backend
     def backend_health_url(self, backend: str) -> str:
         return self.backend_url(backend, self.api_models)
 
@@ -125,14 +131,13 @@ class ProjectConfig:
     def from_dict(data: dict) -> "ProjectConfig":
         return ProjectConfig(
             config_version=data.get("CONFIG_VERSION", "1.0"),
-            base_url=data.get("BASE_URL", os.getenv("AIALL_BASE_URL", "https://api.aiallplatform.com")),
+            base_url=data.get("BASE_URL", "https://api.aiallplatform.com"),
 
             api_chat=data.get("API_CHAT", "/v1/chat/completions"),
             api_completion=data.get("API_COMPLETION", "/v1/completions"),
             api_models=data.get("API_MODELS", "/v1/models"),
 
             api_key=data.get("API_KEY", ""),
-            model_token=data.get("MODEL_TOKEN", ""),
 
             default_max_tokens=int(data.get("DEFAULT_MAX_TOKENS", 10000)),
             default_min_tokens=int(data.get("DEFAULT_MIN_TOKENS", 5000)),
@@ -141,46 +146,40 @@ class ProjectConfig:
         )
 
 # ============================================================
-#  SIMPLE HELPERS FOR API_KEY / MODEL_TOKEN
+#  LOAD CONFIG
 # ============================================================
 
-def read_api_key() -> str:
-    if not API_KEY_FILE.exists():
-        return ""
-    return API_KEY_FILE.read_text(encoding="utf-8").strip()
+def load_project_conf() -> Dict[str, str]:
+    ensure_config_files()
+
+    data: Dict[str, str] = {}
+    for line in PROJECT_CONFIG_FILE.read_text().splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            data[k.strip()] = v.strip()
+    return data
 
 
-def write_api_key(value: str) -> None:
-    API_KEY_FILE.write_text(value.strip() + "\n", encoding="utf-8")
+def load_runtime_config() -> ProjectConfig:
+    return ProjectConfig.from_dict(load_project_conf())
 
 
-def read_model_token() -> str:
-    if not MODEL_TOKEN_FILE.exists():
-        return ""
-    return MODEL_TOKEN_FILE.read_text(encoding="utf-8").strip()
+def load_model_token() -> str:
+    """Đọc token mô hình từ MODEL_TOKEN_FILE."""
+    ensure_config_files()
+    content = MODEL_TOKEN_FILE.read_text().strip()
+    if "=" in content:
+        _, v = content.split("=", 1)
+        return v.strip()
+    return content
 
+# ============================================================
+#  INIT CONFIG SYSTEM
+# ============================================================
 
-def write_model_token(value: str) -> None:
-    MODEL_TOKEN_FILE.write_text(value.strip() + "\n", encoding="utf-8")
-
-
-__all__ = [
-    "DOMAINS",
-    "EMAIL",
-    "CONFIG_DIR",
-    "PROJECT_CONFIG_FILE",
-    "API_KEY_FILE",
-    "MODEL_TOKEN_FILE",
-    "BACKENDS_CONFIG",
-    "DRAIN_CONFIG",
-    "DEFAULT_BACKENDS",
-    "UPSTREAM_FILE",
-    "LOG_FILE",
-    "ProjectConfig",
-    "read_api_key",
-    "write_api_key",
-    "read_model_token",
-    "write_model_token",
-]
-
-
+def init_config_system():
+    log("Initializing unified config system...")
+    ensure_config_files()
+    log("Config integrity check:")
+    for f in [PROJECT_CONFIG_FILE, API_KEY_FILE, MODEL_TOKEN_FILE]:
+        log(f"  {f.name}: {'OK' if f.exists() else 'MISSING'}")
