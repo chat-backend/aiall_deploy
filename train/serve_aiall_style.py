@@ -30,6 +30,10 @@ MAX_LEN = 256
 class HotSwapPayload(BaseModel):
     model_dir: str
 
+    model_config = {
+        "protected_namespaces": ()
+    }
+
 
 class ChatRequest(BaseModel):
     prompt: str
