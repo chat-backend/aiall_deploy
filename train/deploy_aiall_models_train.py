@@ -3,119 +3,112 @@
 """
 AIALL – LoRA Training & Real-Time Inference Module
 CPU-Optimized, QUALITY + VIETNAMESE + AIALL STYLE
-------------------------------------------------------------------
-Nâng cấp chính:
-- Train nhanh hơn nhưng vẫn chất lượng:
-  - MAX_SAMPLES = 300 (giảm nhẹ để tăng tốc, vẫn đủ học)
-  - MAX_LEN = 256
-  - batch size = 4, grad_acc = 2
-  - LoRA r = 12 (vừa phải, an toàn cho 1.5B trên CPU)
-  - warmup_steps = 40, epochs = 2, early-stop mềm
 
-- Trả lời dài hơn, tự nhiên hơn:
-  - max_new_tokens = 320
-  - temperature = 0.8, top_p = 0.92
-
-- Ưu tiên tiếng Việt:
-  - context layer nhận diện tiếng Việt
-  - prompt định hình phong cách AIALL tiếng Việt
-
-- Phong cách AIALL:
-  - luôn giới thiệu là AI trợ lý AIALL
-  - ưu tiên giải thích rõ ràng, thân thiện, có cấu trúc
+Lifecycle:
+- System & CPU setup
+- Paths & global config
+- Base model & tokenizer
+- Dataset loading & preprocessing
+- Training (via training_module)
+- LoRA merge → full model
+- Backend registration
+- Inference loading
+- Chat interface (AIALL style)
 """
 
 import os
 import platform
-import torch
 from datetime import datetime
 
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    TrainingArguments,
-    Trainer,
-    DataCollatorForSeq2Seq,
-)
+import torch
 from datasets import load_dataset
-from peft import LoraConfig, get_peft_model, PeftModel
-
-from secrets import token_hex
-from config import MODEL_TOKEN_FILE
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from train.aiall_style import aiall_chat
-
-# ============================================================
-#  CPU OPTIMIZATION – ưu tiên chất lượng nhưng vẫn nhanh
-# ============================================================
-
-torch.backends.mkldnn.enabled = True
-torch.set_num_threads(max(1, os.cpu_count() // 2))
-
-IS_LINUX = platform.system().lower().startswith("linux")
-
-# Backend + Nginx integration
+from train.training_module import train_lora_model
 import core.backends as be
+
+# ============================================================
+#  SYSTEM & CPU SETUP
+# ============================================================
+
+def is_real_linux() -> bool:
+    return platform.system().lower() == "linux"
+
+IS_LINUX = is_real_linux()
+
 if IS_LINUX:
     import core.nginx as ngx
 else:
     ngx = None
 
+# CPU optimization for 1.5B on CPU
+torch.backends.mkldnn.enabled = True
+torch.set_num_threads(max(1, os.cpu_count() // 2))
+torch.set_default_dtype(torch.float32)
+
+# ============================================================
+#  PATHS & GLOBAL CONFIG
+# ============================================================
+
 BASE_MODEL = "Qwen/Qwen2.5-1.5B"
 DATA_FILE = os.path.join(os.path.dirname(__file__), "aiall_data.jsonl")
+
 LORA_OUTPUT_DIR = "aiall-lora"
 MERGED_OUTPUT_DIR = "aiall-merged"
 
-# Training config – QUALITY + SPEED trên CPU
-OUTPUT_DIR = LORA_OUTPUT_DIR
 TRAIN_BATCH = 4
 GRAD_ACC = 2
 LR = 1e-4
 EPOCHS = 2
 MAX_LEN = 256
-MAX_SAMPLES = 300  # giảm nhẹ để train nhanh hơn
+MAX_SAMPLES = 300
 
-EARLY_STOP_MIN_LOSS_IMPROVEMENT = 0.0007
-EARLY_STOP_PATIENCE = 4
-
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-# --- LOG FILE (HOME, không dùng /root) ---
 LOG_FILE = os.path.expanduser("~/aiall_logs/model_history.log")
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 
+os.makedirs(LORA_OUTPUT_DIR, exist_ok=True)
+os.makedirs(MERGED_OUTPUT_DIR, exist_ok=True)
 
 # ============================================================
-#  LOAD BASE MODEL
+#  BASE MODEL & TOKENIZER
 # ============================================================
 
 def load_base_model():
+    """
+    Load base Qwen model + tokenizer trên CPU,
+    cấu hình cho training LoRA.
+    """
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
     tokenizer.model_max_length = MAX_LEN
 
     model = AutoModelForCausalLM.from_pretrained(BASE_MODEL, device_map="cpu")
-    model = model.to(torch.float32)
     model.gradient_checkpointing_enable()
     model.config.use_cache = False
+
     return model, tokenizer
 
-
 # ============================================================
-#  LOAD + TOKENIZE DATASET
+#  DATASET LOADING & PREPROCESSING
 # ============================================================
 
 def load_dataset_tokenized(tokenizer):
+    """
+    Load dataset từ JSONL và tokenize theo format Instruction/Answer
+    để mô hình quen phong cách AIALL.
+    """
     if not os.path.exists(DATA_FILE):
         raise SystemExit(f"[ERROR] Dataset file not found: {DATA_FILE}")
 
     dataset = load_dataset("json", data_files={"train": DATA_FILE})["train"]
+
     if len(dataset) > MAX_SAMPLES:
         dataset = dataset.select(range(MAX_SAMPLES))
 
     def preprocess(example):
-        # Giữ cấu trúc Instruction/Answer để mô hình quen phong cách AIALL
         text = f"Instruction: {example['instruction']}\nAnswer: {example['output']}"
         tokens = tokenizer(
             text,
@@ -128,174 +121,100 @@ def load_dataset_tokenized(tokenizer):
 
     return dataset.map(preprocess, remove_columns=dataset.column_names)
 
-
 # ============================================================
-#  BUILD LoRA MODEL (QUALITY + SPEED)
-# ============================================================
-
-def build_lora_model(base_model):
-    lora_config = LoraConfig(
-        r=12,  # giảm nhẹ từ 16 xuống 12 để train nhanh hơn nhưng vẫn đủ học
-        lora_alpha=24,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "up_proj", "down_proj"],
-        lora_dropout=0.05,
-        bias="none",
-        task_type="CAUSAL_LM",
-    )
-    return get_peft_model(base_model, lora_config)
-
-
-# ============================================================
-#  TRAIN AIALL (QUALITY MODE – FULL EPOCH, NO EARLY-STOP)
+#  TRAINING (LoRA VIA MODULE)
 # ============================================================
 
 def train_aiall():
+    """
+    Train LoRA adapter cho AIALL trên Linux thật.
+    """
     if not IS_LINUX:
         raise SystemExit("[ERROR] Training is only supported on Linux.")
 
     base_model, tokenizer = load_base_model()
     tokenized_dataset = load_dataset_tokenized(tokenizer)
 
-    collator = DataCollatorForSeq2Seq(tokenizer=tokenizer, padding=True)
-
-    # FULL TRAIN – chạy đủ epoch, không early-stop
-    training_args = TrainingArguments(
-        output_dir=OUTPUT_DIR,
-        per_device_train_batch_size=TRAIN_BATCH,
-        gradient_accumulation_steps=GRAD_ACC,
-        learning_rate=LR,
-        num_train_epochs=EPOCHS,          # chạy đủ số epoch
-        logging_steps=20,
-        save_steps=999999,                # không save giữa chừng
-        save_total_limit=1,
-        fp16=False,
-        bf16=False,
-        use_cpu=True,
-        optim="adamw_torch",
-        max_grad_norm=0.6,
+    train_lora_model(
+        base_model=base_model,
+        tokenizer=tokenizer,
+        tokenized_dataset=tokenized_dataset,
+        output_dir=LORA_OUTPUT_DIR,
+        log_file=LOG_FILE,
+        train_batch=TRAIN_BATCH,
+        grad_acc=GRAD_ACC,
+        lr=LR,
+        epochs=EPOCHS,
         warmup_steps=40,
-        dataloader_num_workers=2,
-        report_to="none",
     )
-
-    lora_model = build_lora_model(base_model)
-
-    # Trainer chuẩn – KHÔNG early-stop
-    trainer = Trainer(
-        model=lora_model,
-        args=training_args,
-        train_dataset=tokenized_dataset,
-        data_collator=collator,
-    )
-
-    print("=== TRAINING START (FULL EPOCH, NO EARLY-STOP) ===")
-    trainer.train()
-    print("=== TRAINING COMPLETE (FULL EPOCH) ===")
-
-    # Save adapter
-    os.makedirs(LORA_OUTPUT_DIR, exist_ok=True)
-    lora_model.save_pretrained(LORA_OUTPUT_DIR)
-    tokenizer.save_pretrained(LORA_OUTPUT_DIR)
-
-    # Generate new model token
-    new_token = token_hex(64)
-    MODEL_TOKEN_FILE.write_text(f"AIALL_MODEL_TOKEN={new_token}\n")
-    print(f"=== NEW MODEL_TOKEN GENERATED === {new_token}")
-    print("=== ADAPTER SAVED TO aiall-lora (QUALITY MODE) ===")
-
-    # Log
-    with open(LOG_FILE, "a") as h:
-        h.write(
-            f"[TRAIN_FULL_QUALITY] {datetime.now().isoformat()} "
-            f"model_dir={LORA_OUTPUT_DIR} version=full_quality checksum=none\n"
-        )
-
 
 # ============================================================
-#  MERGE LoRA → FULL MODEL (FIXED – SAVE TOKENIZER)
+#  MERGE LoRA → FULL MODEL
 # ============================================================
 
 def merge_lora():
-    print("=== MERGING LoRA INTO FULL MODEL (CPU MODE, QUALITY+SPEED) ===")
-
+    """
+    Merge LoRA adapter vào full Qwen model và lưu cùng tokenizer.
+    """
     if not os.path.exists(LORA_OUTPUT_DIR):
-        raise SystemExit(f"[ERROR] LoRA adapter not found: {LORA_OUTPUT_DIR}")
+        raise SystemExit("[ERROR] LoRA adapter not found.")
 
-    # Load base model
     base_model = AutoModelForCausalLM.from_pretrained(BASE_MODEL, device_map="cpu")
-    base_model = base_model.to(torch.float32)
 
-    # Load LoRA adapter
     merged = PeftModel.from_pretrained(base_model, LORA_OUTPUT_DIR)
-
-    # Merge LoRA → full model
     merged = merged.merge_and_unload()
 
-    # Save merged model
-    os.makedirs(MERGED_OUTPUT_DIR, exist_ok=True)
     merged.save_pretrained(MERGED_OUTPUT_DIR)
 
-    # 🔥 FIX QUAN TRỌNG: Save tokenizer vào merged model
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.save_pretrained(MERGED_OUTPUT_DIR)
 
-    print("=== MERGED MODEL + TOKENIZER SAVED TO aiall-merged ===")
-
-    # Log
     with open(LOG_FILE, "a") as h:
         h.write(
-            f"[MERGE_QUALITY_SPEED] {datetime.now().isoformat()} "
-            f"model_dir={MERGED_OUTPUT_DIR} version=quality_speed checksum=none\n"
+            f"[MERGE] {datetime.now().isoformat()} model_dir={MERGED_OUTPUT_DIR}\n"
         )
 
-
 # ============================================================
-#  REGISTER BACKEND (WSL-SAFE + LINUX-FULL + NO-FAIL)
+#  BACKEND REGISTRATION
 # ============================================================
 
-def register_aiall_backend(host="127.0.0.1", port=8001):
+def register_aiall_backend(host: str = "127.0.0.1", port: int = 8001):
+    """
+    Đăng ký backend AIALL vào gateway nội bộ và (nếu có) Nginx upstream.
+    """
     backend = f"{host}:{port}"
-    print(f"=== REGISTER AIALL BACKEND: {backend} ===")
 
-    # Luôn thêm backend vào danh sách nội bộ (gateway)
     try:
         be.add_backend(backend)
-        print(f"[BACKENDS] ✅ Added backend: {backend}")
-    except Exception as e:
-        print(f"[WARN] Could not add backend: {e}")
-
-    # Nếu không phải Linux thật → bỏ qua Nginx
-    if not IS_LINUX:
-        print("[WARN] Skipping Nginx registration — not a real Linux environment.")
+    except Exception:
+        # Không để backend lỗi làm crash hệ thống
         return
 
-    # Kiểm tra thư mục Nginx
+    if not IS_LINUX or ngx is None:
+        return
+
     nginx_conf_dir = "/etc/nginx/conf.d"
     if not os.path.exists(nginx_conf_dir):
-        print("[WARN] Nginx not installed — skipping upstream generation.")
         return
 
-    # Thử tạo upstream + reload Nginx
     try:
         ngx.generate_upstream_block()
         ngx.reload_nginx()
-        print("=== AIALL BACKEND REGISTERED SUCCESSFULLY (NGINX MODE) ===")
-    except Exception as e:
-        print(f"[WARN] Nginx reload skipped: {e}")
-        print("[WARN] Backend registration completed WITHOUT Nginx.")
+    except Exception:
+        # Nginx lỗi thì bỏ qua, backend vẫn hoạt động nội bộ
         return
 
-    print("=== URL CHÍNH THỨC: https://api.aiallplatform.com/aiall/ ===")
-
-
 # ============================================================
-#  LOAD AIALL FOR INFERENCE
+#  INFERENCE LOADING
 # ============================================================
 
 def load_aiall_for_inference():
+    """
+    Load merged model + tokenizer cho inference thời gian thực trên CPU.
+    """
     if not os.path.exists(MERGED_OUTPUT_DIR):
-        raise SystemExit(f"[ERROR] Merged model not found: {MERGED_OUTPUT_DIR}")
+        raise SystemExit("[ERROR] Merged model not found.")
 
     tokenizer = AutoTokenizer.from_pretrained(MERGED_OUTPUT_DIR)
     tokenizer.pad_token = tokenizer.eos_token
@@ -303,14 +222,21 @@ def load_aiall_for_inference():
     tokenizer.model_max_length = MAX_LEN
 
     model = AutoModelForCausalLM.from_pretrained(MERGED_OUTPUT_DIR, device_map="cpu")
-    model = model.to(torch.float32)
+    model.config.use_cache = True
     model.eval()
+
     return model, tokenizer
 
-
 # ============================================================
-#  CHAT FUNCTION – DÀI HƠN, TỰ NHIÊN HƠN, ƯU TIÊN TIẾNG VIỆT
+#  CHAT INTERFACE (AIALL STYLE)
 # ============================================================
 
 def chat(model, tokenizer, prompt: str):
+    """
+    Hàm chat chính, sử dụng aiall_chat để áp dụng phong cách AIALL:
+    - Ưu tiên tiếng Việt
+    - Giải thích rõ ràng, thân thiện, có cấu trúc
+    """
+    if not prompt.strip():
+        return "Bạn chưa nhập nội dung."
     return aiall_chat(model, tokenizer, prompt)
