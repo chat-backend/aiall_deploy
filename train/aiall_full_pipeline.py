@@ -12,7 +12,6 @@ Lifecycle:
 - STEP 5: Register backend into gateway
 """
 
-import platform
 import sys
 import os
 import shutil
@@ -26,8 +25,6 @@ from train.deploy_aiall_models_train import (
     load_aiall_for_inference,
     register_aiall_backend,
 )
-
-IS_LINUX = platform.system().lower().startswith("linux")
 
 LORA_DIR = "aiall-lora"
 MERGED_DIR = "aiall-merged"
@@ -50,18 +47,18 @@ def log(msg: str):
 #  ENVIRONMENT & PATH CHECKS
 # ============================================================
 
-def ensure_linux():
-    if not IS_LINUX:
-        log("[ERROR] Full train pipeline chỉ hỗ trợ trên Linux.")
-        sys.exit(1)
-
-
 def ensure_paths():
     cwd = os.getcwd()
     log(f"[ENV] Current working directory: {cwd}")
     if not os.path.exists("train"):
         log("[ERROR] Không tìm thấy thư mục train/ trong cwd.")
         sys.exit(1)
+
+
+def step_0_env_check():
+    log("\n=== STEP 0: ENVIRONMENT & SANITY CHECKS ===")
+    ensure_paths()
+    log("[ENV] Paths OK, CPU-SAFE pipeline ready.")
 
 
 # ============================================================
@@ -97,17 +94,6 @@ def rollback_merged_model(reason: str):
             log(traceback.format_exc())
     else:
         log("[ROLLBACK] Không có backup để khôi phục.")
-
-
-# ============================================================
-#  STEP 0: ENVIRONMENT & SANITY CHECKS
-# ============================================================
-
-def step_0_env_check():
-    log("\n=== STEP 0: ENVIRONMENT & SANITY CHECKS ===")
-    ensure_linux()
-    ensure_paths()
-    log("[ENV] Linux OK, paths OK.")
 
 
 # ============================================================
