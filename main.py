@@ -1,29 +1,38 @@
 # main.py
 #!/usr/bin/env python3
 """
-AIALL vLLM Gateway – System Service (FastAPI, FULL INTEGRATION, CROSS-PLATFORM SAFE)
-------------------------------------------------------------------------------------
-- Không xử lý API AI chính (đã đi qua Nginx → vLLM backend)
-- Hiển thị thông tin cấu hình runtime
-- Quản lý backend (add/remove/drain/undrain)
-- Health-check cluster
-- Auto-update, auto-drain, rolling-restart (Linux-only)
-- Tích hợp train/merge/load/test mô hình AIALL qua endpoint riêng
-- Xem MODEL_TOKEN (ẩn giá trị, chỉ hash)
-- Xem trạng thái Real-Time Context Layer
+AIALL Gateway – Unified System Service (Ubuntu-Friendly, Auto-Reload, Auto-Check)
+--------------------------------------------------------------------------------
+- Không phụ thuộc root
+- Tự động kiểm tra lỗi file quan trọng (train, serve, deploy)
+- Tự động restart backend AIALL STYLE ENGINE 8.0 khi file thay đổi
+- Tích hợp đầy đủ router của hệ thống AIALL
+- Soft cluster mode: không crash nếu thiếu Nginx/vLLM
 """
 
 import os
 import platform
 import hashlib
 import subprocess
+import time
 from datetime import datetime
+from threading import Thread
 
 from fastapi import FastAPI
 import uvicorn
 
-from config_loader import load_runtime_config
+from config import init_config_system, load_runtime_config
+
+# ============================================================
+#  INIT CONFIG
+# ============================================================
+
+init_config_system()
 cfg = load_runtime_config()
+
+# ============================================================
+#  ROUTERS IMPORT
+# ============================================================
 
 from routes.aiall_model import router as aiall_model_router
 from routes.aiall_inference import router as aiall_inference_router
@@ -41,17 +50,26 @@ from routes.aiall_cluster_repair_smart import router as cluster_repair_smart_rou
 from routes.aiall_cluster_rebalance_smart import router as cluster_rebalance_smart_router
 from routes.aiall_model_hot_swap import router as model_hot_swap_router
 
-IS_LINUX = platform.system().lower().startswith("linux")
+# ============================================================
+#  CLUSTER FUNCTIONS (SOFT MODE)
+# ============================================================
 
-# ===== Import deploy_main logic (Linux-only) =====
+IS_LINUX = platform.system().lower().startswith("linux")
 if IS_LINUX:
-    from deploy_main import (
-        full_deploy,
-        auto_update_mode,
-        health_check,
-        auto_drain,
-        rolling_restart,
-    )
+    try:
+        from core.deploy_aiall_url import (
+            full_deploy,
+            auto_update_mode,
+            health_check,
+            auto_drain,
+            rolling_restart,
+        )
+    except Exception:
+        full_deploy = None
+        auto_update_mode = None
+        health_check = None
+        auto_drain = None
+        rolling_restart = None
 else:
     full_deploy = None
     auto_update_mode = None
@@ -59,24 +77,112 @@ else:
     auto_drain = None
     rolling_restart = None
 
-# ===== Backend manager =====
-if IS_LINUX:
+# ============================================================
+#  BACKEND MANAGER
+# ============================================================
+
+try:
     import core.backends as be
-    import core.nginx as ngx
-else:
-    import core.backends as be
-    ngx = None  # Nginx không dùng trên Windows
+except Exception:
+    be = None
 
 
-def is_root() -> bool:
+def is_root():
     return hasattr(os, "geteuid") and os.geteuid() == 0
 
 
-app = FastAPI(
-    title="AIALL vLLM Gateway – System Service",
-    version="3.0.0",
-)
+# ============================================================
+#  AUTO FILE CHECKER & AUTO-RESTART SERVE ENGINE
+# ============================================================
 
+WATCH_FILES = [
+    "train/aiall_style.py",
+    "train/aiall_full_pipeline.py",
+    "train/serve_aiall_style.py",
+    "core/deploy_aiall_url.py",
+]
+
+FILE_HASH = {}
+SERVE_PROCESS = None
+
+
+def file_hash(path: str):
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except Exception:
+        return None
+
+
+def check_python_syntax(path: str):
+    try:
+        subprocess.check_output(["python3", "-m", "py_compile", path])
+        return True, None
+    except subprocess.CalledProcessError as e:
+        return False, e.output.decode() if e.output else "Syntax error"
+
+
+def restart_serve_engine(reason: str = "file change"):
+    global SERVE_PROCESS
+    try:
+        if SERVE_PROCESS:
+            print(f"[AUTO-RESTART] Stopping old serve_aiall_style.py (reason: {reason})...")
+            SERVE_PROCESS.terminate()
+            time.sleep(1)
+
+        print("[AUTO-RESTART] Starting new serve_aiall_style.py...")
+        SERVE_PROCESS = subprocess.Popen(
+            ["python3", "train/serve_aiall_style.py"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        print(f"[AUTO-RESTART] serve_aiall_style.py restarted successfully (PID={SERVE_PROCESS.pid}).")
+    except Exception as e:
+        print(f"[AUTO-RESTART] Failed to restart serve engine: {e}")
+
+
+def watch_files_loop():
+    while True:
+        for f in WATCH_FILES:
+            h = file_hash(f)
+            if f not in FILE_HASH:
+                FILE_HASH[f] = h
+                continue
+
+            if h != FILE_HASH[f]:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                old_hash = FILE_HASH[f]
+
+                print(f"[AUTO-RELOAD] {timestamp} – File changed: {f}")
+                print(f"[AUTO-RELOAD] Old hash: {old_hash}")
+                print(f"[AUTO-RELOAD] New hash: {h}")
+
+                ok, err = check_python_syntax(f)
+                if not ok:
+                    print(f"[ERROR] Syntax error in {f}:\n{err}")
+                else:
+                    print(f"[OK] {f} syntax valid.")
+                    if "serve_aiall_style.py" in f:
+                        restart_serve_engine(reason=f)
+
+                FILE_HASH[f] = h
+
+        time.sleep(2)
+
+
+Thread(target=watch_files_loop, daemon=True).start()
+
+# Khởi động serve engine ngay khi gateway chạy
+restart_serve_engine(reason="gateway startup")
+
+# ============================================================
+#  FASTAPI APP
+# ============================================================
+
+app = FastAPI(
+    title="AIALL Gateway – Unified System Service",
+    version="4.0.0",
+)
 
 # ============================================================
 #  ROOT ENDPOINT
@@ -85,7 +191,7 @@ app = FastAPI(
 @app.get("/")
 def index():
     return {
-        "service": "AIALL vLLM Gateway – System Service",
+        "service": "AIALL Gateway – Unified System Service",
         "status": "running",
         "base_url": cfg.base_url,
         "api": {
@@ -103,244 +209,63 @@ def index():
             "temperature": cfg.default_temperature,
             "top_p": cfg.default_top_p,
         },
-        "backends": be.load_backends(),
+        "backends": be.load_backends() if be else [],
         "environment": {
             "is_linux": IS_LINUX,
             "is_root": is_root() if IS_LINUX else None,
         },
-        "note": "API chính chạy qua Nginx → vLLM backend (OpenAI-compatible)",
+        "note": "Gateway đang chạy chế độ Ubuntu-friendly (không yêu cầu root).",
     }
 
-
 # ============================================================
-#  RUNTIME CONFIG VIEW
-# ============================================================
-
-@app.get("/system/config")
-def system_config():
-    return {
-        "base_url": cfg.base_url,
-        "api_chat": cfg.api_chat,
-        "api_completion": cfg.api_completion,
-        "api_models": cfg.api_models,
-        "url_chat": cfg.url_chat,
-        "url_completion": cfg.url_completion,
-        "url_models": cfg.url_models,
-        "default_params": {
-            "max_tokens": cfg.default_max_tokens,
-            "min_tokens": cfg.default_min_tokens,
-            "temperature": cfg.default_temperature,
-            "top_p": cfg.default_top_p,
-        },
-    }
-
-
-# ============================================================
-#  MODEL TOKEN HASH VIEW
-# ============================================================
-
-@app.get("/system/model-token")
-def system_model_token():
-    raw = cfg.model_token.strip()
-    hashed = hashlib.sha256(raw.encode()).hexdigest()
-    return {
-        "model_token_hash": hashed,
-        "note": "Giá trị thật của MODEL_TOKEN được ẩn để đảm bảo an toàn."
-    }
-
-
-# ============================================================
-#  REAL-TIME CONTEXT STATUS
-# ============================================================
-
-@app.get("/system/realtime")
-def system_realtime():
-    return {
-        "realtime_context": "enabled",
-        "sources": {
-            "time": True,
-            "web_search": "stub",
-            "database": "stub",
-            "events": "stub",
-            "finance": "stub",
-            "weather": "stub",
-            "news": "stub",
-            "calendar": True,
-        },
-        "current_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "note": "Real-Time Context Layer đang hoạt động ở chế độ stub. Có thể nâng cấp để dùng API thật.",
-    }
-
-
-# ============================================================
-#  SYSTEM HEALTH
+#  SYSTEM HEALTH & AUTO-RELOAD STATUS
 # ============================================================
 
 @app.get("/system/health")
 def system_health():
-    return {"status": "ok"}
+    return {"status": "ok", "time": datetime.now().isoformat()}
 
+
+@app.get("/system/auto-reload-status")
+def auto_reload_status():
+    out = {}
+    for f in WATCH_FILES:
+        out[f] = {
+            "last_hash": FILE_HASH.get(f),
+            "exists": os.path.exists(f),
+        }
+    return {
+        "status": "watching",
+        "files": out,
+        "serve_running": SERVE_PROCESS is not None,
+        "serve_pid": SERVE_PROCESS.pid if SERVE_PROCESS else None,
+    }
 
 # ============================================================
-#  CLUSTER HEALTH
+#  FILE CHECK STATUS
+# ============================================================
+
+@app.get("/system/file-check")
+def system_file_check():
+    out = {}
+    for f in WATCH_FILES:
+        ok, err = check_python_syntax(f)
+        out[f] = "OK" if ok else f"ERROR: {err}"
+    return out
+
+# ============================================================
+#  CLUSTER HEALTH (soft mode)
 # ============================================================
 
 @app.get("/cluster/health")
 def cluster_health():
-    if not IS_LINUX:
-        return {"cluster": "unknown", "error": "cluster health is Linux-only"}
+    if not IS_LINUX or health_check is None:
+        return {"cluster": "unknown", "note": "Linux-only"}
     try:
         health_check()
         return {"cluster": "healthy"}
     except Exception as e:
         return {"cluster": "unhealthy", "error": str(e)}
-
-
-# ============================================================
-#  TRIGGER TRAIN PIPELINE
-# ============================================================
-
-@app.post("/cluster/train")
-def cluster_train():
-    if not IS_LINUX:
-        return {"train": "unsupported", "error": "train pipeline is Linux-only"}
-    if not is_root():
-        return {"train": "failed", "error": "train requires root (sudo)"}
-
-    try:
-        result = subprocess.run(
-            ["python3", "train/train_pipeline.py"],
-            capture_output=True,
-            text=True,
-        )
-        return {
-            "train": "completed",
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-        }
-    except Exception as e:
-        return {"train": "failed", "error": str(e)}
-
-
-# ============================================================
-#  FULL DEPLOY
-# ============================================================
-
-@app.post("/cluster/deploy")
-def cluster_deploy():
-    if not IS_LINUX:
-        return {"deploy": "unsupported", "error": "deploy is Linux-only"}
-    if not is_root():
-        return {"deploy": "failed", "error": "deploy requires root (sudo)"}
-    try:
-        full_deploy()
-        return {"deploy": "completed"}
-    except Exception as e:
-        return {"deploy": "failed", "error": str(e)}
-
-
-# ============================================================
-#  AUTO UPDATE
-# ============================================================
-
-@app.post("/cluster/update")
-def cluster_update():
-    if not IS_LINUX:
-        return {"update": "unsupported", "error": "update is Linux-only"}
-    if not is_root():
-        return {"update": "failed", "error": "update requires root (sudo)"}
-    try:
-        auto_update_mode()
-        return {"update": "started"}
-    except Exception as e:
-        return {"update": "failed", "error": str(e)}
-
-
-# ============================================================
-#  AUTO DRAIN
-# ============================================================
-
-@app.post("/cluster/auto-drain")
-def cluster_auto_drain():
-    if not IS_LINUX:
-        return {"auto_drain": "unsupported", "error": "auto-drain is Linux-only"}
-    if not is_root():
-        return {"auto_drain": "failed", "error": "auto-drain requires root (sudo)"}
-    try:
-        auto_drain()
-        return {"auto_drain": "started"}
-    except Exception as e:
-        return {"auto_drain": "failed", "error": str(e)}
-
-
-# ============================================================
-#  ROLLING RESTART
-# ============================================================
-
-@app.post("/cluster/rolling-restart")
-def cluster_rolling_restart():
-    if not IS_LINUX:
-        return {"rolling_restart": "unsupported", "error": "rolling-restart is Linux-only"}
-    if not is_root():
-        return {"rolling_restart": "failed", "error": "rolling-restart requires root (sudo)"}
-    try:
-        rolling_restart()
-        return {"rolling_restart": "started"}
-    except Exception as e:
-        return {"rolling_restart": "failed", "error": str(e)}
-
-
-# ============================================================
-#  BACKEND MANAGEMENT
-# ============================================================
-
-@app.post("/backend/add")
-def add_backend(backend: str):
-    try:
-        be.add_backend(backend)
-        if IS_LINUX and ngx is not None:
-            ngx.generate_upstream_block()
-            ngx.reload_nginx()
-        return {"backend": backend, "status": "added"}
-    except Exception as e:
-        return {"backend": backend, "status": "failed", "error": str(e)}
-
-
-@app.post("/backend/remove")
-def remove_backend(backend: str):
-    try:
-        be.remove_backend(backend)
-        if IS_LINUX and ngx is not None:
-            ngx.generate_upstream_block()
-            ngx.reload_nginx()
-        return {"backend": backend, "status": "removed"}
-    except Exception as e:
-        return {"backend": backend, "status": "failed", "error": str(e)}
-
-
-@app.post("/backend/drain")
-def drain_backend(backend: str):
-    try:
-        be.drain_backend(backend)
-        if IS_LINUX and ngx is not None:
-            ngx.generate_upstream_block()
-            ngx.reload_nginx()
-        return {"backend": backend, "status": "drained"}
-    except Exception as e:
-        return {"backend": backend, "status": "failed", "error": str(e)}
-
-
-@app.post("/backend/undrain")
-def undrain_backend(backend: str):
-    try:
-        be.undrain_backend(backend)
-        if IS_LINUX and ngx is not None:
-            ngx.generate_upstream_block()
-            ngx.reload_nginx()
-        return {"backend": backend, "status": "undrained"}
-    except Exception as e:
-        return {"backend": backend, "status": "failed", "error": str(e)}
-
 
 # ============================================================
 #  ROUTES REGISTRATION
@@ -362,7 +287,9 @@ app.include_router(cluster_repair_smart_router)
 app.include_router(cluster_rebalance_smart_router)
 app.include_router(model_hot_swap_router)
 
+# ============================================================
+#  RUN SERVER
+# ============================================================
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=6001)
-
-
