@@ -20,15 +20,25 @@ from config import MODEL_TOKEN_FILE
 
 def build_lora_adapter(base_model):
     """
-    Tạo LoRA adapter CPU-SAFE, giữ nguyên API cũ.
+    Tạo LoRA adapter CPU-SAFE, đúng module của Qwen2.5-1.5B.
     """
     lora_config = LoraConfig(
-        r=4,                     # CPU-friendly
+        r=4,
         lora_alpha=16,
-        target_modules=["c_attn"],   # Qwen attention modules tương tự GPT-2
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
+
+        # Qwen2.5-1.5B modules
+        target_modules=[
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
     )
     return get_peft_model(base_model, lora_config)
 
